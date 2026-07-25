@@ -32,6 +32,12 @@
           <label>Height <input id="plane-height" type="number" step="0.1" min="0.01" /></label>
           <button id="do-cut">Cut</button>
         </div>
+        <div id="actions" hidden>
+          <button id="do-undo">Undo cut</button>
+          <button id="do-export">Export parts…</button>
+        </div>
+        <div id="messages"></div>
+        <div id="progress" hidden><div id="progress-bar"></div></div>
       </aside>
       <main id="viewport"></main>
     </div>
