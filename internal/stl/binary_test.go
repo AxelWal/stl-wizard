@@ -82,8 +82,15 @@ func TestReadRejectsTruncatedFile(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 	raw := buf.Bytes()[:buf.Len()-20] // lop off part of the last triangle
-	if _, err := Read(bytes.NewReader(raw), int64(len(raw))); err == nil {
+
+	_, err := Read(bytes.NewReader(raw), int64(len(raw)))
+	if err == nil {
 		t.Fatal("expected an error for a truncated file")
+	}
+	// The message must name the real problem. Before this was fixed, a truncated
+	// binary file produced an ASCII parser error instead.
+	if !strings.Contains(err.Error(), "truncated or corrupt") {
+		t.Errorf("error does not name the problem: %v", err)
 	}
 }
 

@@ -25,6 +25,16 @@ func Read(r io.ReaderAt, size int64) (*Mesh, error) {
 			if 84+binaryTriSize*count == size {
 				return readBinary(r, size)
 			}
+			// The size does not match a binary file. Try ASCII, but if that fails
+			// too, a truncated or corrupt binary file is the likelier explanation
+			// and saying so is far more useful than relaying a parse complaint
+			// about a file that was never ASCII.
+			m, asciiErr := readASCII(r, size)
+			if asciiErr == nil {
+				return m, nil
+			}
+			return nil, fmt.Errorf("file is %d bytes and is not valid ASCII STL (%v); read as binary STL its header declares %d triangles, which would require %d bytes — the file is truncated or corrupt",
+				size, asciiErr, count, 84+binaryTriSize*count)
 		}
 	}
 	return readASCII(r, size)
