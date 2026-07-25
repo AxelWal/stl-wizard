@@ -2,6 +2,7 @@ package cut
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"stl-cutter/internal/fixtures"
@@ -445,7 +446,7 @@ func TestApplyPinsLeavesBothPartsWatertight(t *testing.T) {
 }
 
 func TestApplyPinsRespectsThePegSide(t *testing.T) {
-	res, s, _ := cutCube(t)
+	res, s, eps := cutCube(t)
 	before1 := res.Part1.Volume()
 
 	ps := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 6, PegOnPart: 1}.withDefaults()
@@ -454,6 +455,76 @@ func TestApplyPinsRespectsThePegSide(t *testing.T) {
 	}
 	if res.Part1.Volume() <= before1 {
 		t.Error("with PegOnPart 1, part 1 should gain material")
+	}
+	// Volume alone would pass with the face re-paved the wrong way round. This
+	// path swaps which part is flipped, so it has to be defended in its own right.
+	if rep := meshcheck.Check(res.Part1, eps); !rep.OK() {
+		t.Errorf("part 1 after pinning with PegOnPart 1: %s", rep)
+	}
+	if rep := meshcheck.Check(res.Part2, eps); !rep.OK() {
+		t.Errorf("part 2 after pinning with PegOnPart 1: %s", rep)
+	}
+}
+
+// Split's verdict describes the cut, not the pinned result. ApplyPins rewrites
+// both cut faces, so it has to re-check what it is actually handing back.
+func TestApplyPinsRefreshesTheWatertightnessVerdict(t *testing.T) {
+	res, s, _ := cutCube(t)
+
+	// A clean cut is clean before and after, so agreement alone would hold even
+	// if the verdict were never recomputed. Seed both fields with a report that is
+	// false about the pinned parts: only an ApplyPins that re-checks can put them
+	// right.
+	res.Part1Check = meshcheck.Report{OpenEdges: 7}
+	res.Part2Check = meshcheck.Report{OpenEdges: 7}
+
+	ps := PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6}.withDefaults()
+	if _, err := ApplyPins(res, s, ps); err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+
+	eps := math.Max(res.Part1.Epsilon(), res.Part2.Epsilon())
+	if got, want := res.Part1Check.OK(), meshcheck.Check(res.Part1, eps).OK(); got != want {
+		t.Errorf("Part1Check says OK=%v but the mesh says %v", got, want)
+	}
+	if got, want := res.Part2Check.OK(), meshcheck.Check(res.Part2, eps).OK(); got != want {
+		t.Errorf("Part2Check says OK=%v but the mesh says %v", got, want)
+	}
+	if !res.Watertight() {
+		t.Errorf("a clean pinned cut should report watertight; warnings: %v", res.Warnings)
+	}
+}
+
+// A model with a second body whose face lies exactly in the cutting plane used to
+// have that face silently deleted: both parts are re-paved from one part's face
+// regions, so a region present on only one side was dropped and never replaced.
+// The result was an unprintable part with no warning at all.
+func TestApplyPinsRefusesWhenTheTwoFacesDoNotMatch(t *testing.T) {
+	big := fixtures.Cube(40)
+	stray := fixtures.Box(geom.Vec3{60, 0, 20}, geom.Vec3{70, 10, 30})
+	m := &stl.Mesh{Tris: append(append([]stl.Tri{}, big.Tris...), stray.Tris...)}
+
+	s := SpecFromNormal(geom.Vec3{20, 20, 20}, geom.Vec3{0, 0, 1}, 30, 30)
+	res, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+
+	out, err := ApplyPins(res, s, PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 6}.withDefaults())
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if len(out.Warnings) == 0 {
+		t.Error("a mismatched pair of cut faces must be reported, not silently mangled")
+	}
+
+	// Whatever it decides to do, it must not hand back a broken part quietly.
+	eps := math.Max(res.Part1.Epsilon(), res.Part2.Epsilon())
+	if rep := meshcheck.Check(res.Part1, eps); !rep.OK() && res.Part1Check.OK() {
+		t.Errorf("part 1 is %s but Part1Check reports it clean", rep)
+	}
+	if rep := meshcheck.Check(res.Part2, eps); !rep.OK() && res.Part2Check.OK() {
+		t.Errorf("part 2 is %s but Part2Check reports it clean", rep)
 	}
 }
 
@@ -481,11 +552,18 @@ func TestApplyPinsSkipsWhenTheFaceIsTooNarrow(t *testing.T) {
 	}
 }
 
-// The 1mm wall guard, axially. A thin shell has nothing behind the face.
+// The 1mm wall guard, axially — the guard that measures material BEHIND the
+// face, not room across it.
+//
+// The fixture has to pass the lateral guard to reach the axial one. A hollow
+// shell does not: its cut face is a wall-thin ring, so placePins finds nowhere
+// to stand and the run ends at the lateral warning without a single skipped pin
+// to show. A wide, thin plate separates the two: 40x40 of face is ample room
+// laterally, while the 4mm of plate behind it is nowhere near the 7.15mm a
+// 6mm peg's socket needs (6 + 0.15 clearance + 1 wall).
 func TestApplyPinsSkipsWhenThereIsNoMaterialBehind(t *testing.T) {
-	// A hollow box with 1.5mm walls: a 6mm-deep socket cannot fit behind the face.
-	m := fixtures.HollowBox(geom.Vec3{40, 40, 40}, 1.5)
-	s := SpecFromNormal(geom.Vec3{20, 20, 20}, geom.Vec3{0, 0, 1}, 200, 200)
+	m := fixtures.Box(geom.Vec3{0, 0, 0}, geom.Vec3{40, 40, 8})
+	s := SpecFromNormal(geom.Vec3{20, 20, 4}, geom.Vec3{0, 0, 1}, 200, 200)
 	res, err := Split(m, s)
 	if err != nil {
 		t.Fatalf("Split: %v", err)
@@ -497,9 +575,17 @@ func TestApplyPinsSkipsWhenThereIsNoMaterialBehind(t *testing.T) {
 		t.Fatalf("ApplyPins: %v", err)
 	}
 	if out.Placed != 0 {
-		t.Errorf("placed %d pins into a 1.5mm shell; a 6mm socket cannot fit", out.Placed)
+		t.Errorf("placed %d pins into a 4mm plate; a 6mm socket cannot fit", out.Placed)
+	}
+	// The point of the fixture: the axial guard is what refuses these, so it must
+	// actually report them.
+	if len(out.Skipped) == 0 {
+		t.Fatalf("nothing was skipped, so the axial guard was never reached; warnings: %v", out.Warnings)
 	}
 	for _, sk := range out.Skipped {
+		if !strings.Contains(sk.Reason, "material behind") {
+			t.Errorf("skipped for %q, want the axial guard's reason", sk.Reason)
+		}
 		if sk.Measured >= sk.Required {
 			t.Errorf("skipped pin reports measured %v >= required %v, which is not a reason to skip",
 				sk.Measured, sk.Required)

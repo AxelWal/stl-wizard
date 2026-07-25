@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
 )
 
@@ -404,7 +405,9 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	}
 
 	cutPlane := s.Planes()[0]
-	eps := res.Part2.Epsilon()
+	// The looser of the two, so the tolerance is no tighter than the one the cut
+	// was made with and the same value is fair to both parts.
+	eps := math.Max(res.Part1.Epsilon(), res.Part2.Epsilon())
 
 	// The peg extends out of the peg-bearing part, and the socket is bored the
 	// same way into the other one — so the peg exactly fills what the socket
@@ -427,26 +430,41 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	idxPeg, groups, origin, u, v, ok := cutFace(pegPart, cutPlane, eps)
 	if !ok {
 		out.Warnings = append(out.Warnings,
-			"could not read the cut face, so no pins were placed")
+			"could not read the cut face on the part carrying the pegs, so no pins were placed")
 		return out, nil
 	}
 	// The two faces are the same region — part 1's is part 2's cap reversed — so
 	// the peg part's loops are used to re-pave both. That is not a shortcut: it is
 	// what guarantees the two re-paved faces share their boundary vertex for
 	// vertex, however each part's own loop assembly happened to order things.
-	idxSocket, _, _, _, _, okS := cutFace(socketPart, cutPlane, eps)
+	idxSocket, socketGroups, _, _, _, okS := cutFace(socketPart, cutPlane, eps)
 	if !okS {
 		out.Warnings = append(out.Warnings,
-			"could not read the matching face on the other part, so no pins were placed")
+			"could not read the cut face on the part carrying the sockets, so no pins were placed")
+		return out, nil
+	}
+
+	// Both parts are re-paved from the peg part's groups, so a face region present
+	// on one part and not the other would be dropped and never replaced. That
+	// happens with multi-body models where an unrelated shell's face lies exactly
+	// in the cut plane.
+	if len(groups) != len(socketGroups) {
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"the two cut faces do not match (%d region(s) against %d), so no pins were placed; "+
+				"this usually means another part of the model lies exactly in the cutting plane",
+			len(groups), len(socketGroups)))
 		return out, nil
 	}
 
 	// pinCylinder's cavity flag assumes a basis right-handed about the direction
 	// the pin runs: it winds its wall from u x v, so with dir opposed to u x v the
 	// flag would mean the opposite of what it says. planeBasis gives u x v == +N,
-	// so a pin running along -N gets a mirrored basis. That also lines each ring
-	// vertex up with circleLoop's, whose angles run the other way for the same
-	// reason, so the cylinder meets the hole vertex for vertex.
+	// so a pin running along -N gets a mirrored basis. Either way the cylinder's
+	// ring lands on exactly the same points as circleLoop's, so the two meet along
+	// the same edges. Which index carries which point is not the same in both
+	// cases — with the pegs on part 1 the two run the circle in opposite orders —
+	// and it does not need to be: the edges coincide either way, and what has to
+	// agree is the orientation the wall and the hole give them.
 	pu, pv := u, v
 	if pegDir.Dot(u.Cross(v)) < 0 {
 		pv = v.Scale(-1)
@@ -501,24 +519,43 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 		return out, nil
 	}
 
-	if err := repaveFace(pegPart, idxPeg, groups, pegHoles, pegFlip); err != nil {
+	pegPaved, err := repaveFace(pegPart, idxPeg, groups, pegHoles, pegFlip)
+	if err != nil {
 		return nil, err
 	}
-	if err := repaveFace(socketPart, idxSocket, groups, socketHoles, socketFlip); err != nil {
+	socketPaved, err := repaveFace(socketPart, idxSocket, groups, socketHoles, socketFlip)
+	if err != nil {
 		return nil, err
 	}
+	pegPart.Tris = append(pegPaved, pegTris...)
+	socketPart.Tris = append(socketPaved, socketTris...)
 
-	pegPart.Tris = append(pegPart.Tris, pegTris...)
-	socketPart.Tris = append(socketPart.Tris, socketTris...)
+	// Pinning rewrites both cut faces, so the cut's own verdict no longer
+	// describes what is being handed back. Re-check the finished parts and
+	// replace it. This is also the net that catches a face which could not be
+	// re-paved cleanly — a hole filled solid, or a triangle dropped and never
+	// replaced — none of which the placement logic can see for itself.
+	res.Part1Check = meshcheck.Check(res.Part1, eps)
+	res.Part2Check = meshcheck.Check(res.Part2, eps)
+	if !res.Part1Check.OK() {
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"after adding pins, the remaining part is not a closed solid: %s", res.Part1Check))
+	}
+	if !res.Part2Check.OK() {
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"after adding pins, the cut-off part is not a closed solid: %s", res.Part2Check))
+	}
 	return out, nil
 }
 
-// repaveFace replaces a part's cut-face triangles with a fresh triangulation that
-// has the pin circles as extra holes.
+// repaveFace returns a part's triangles with its cut face replaced by a fresh
+// triangulation carrying the pin circles as extra holes. It assigns nothing, so
+// a caller can build both parts' replacements before committing either — an
+// error partway through must not leave one part punched and the other whole.
 //
 // flip is set for the part whose face looks the other way, so both parts keep
 // their own outward orientation.
-func repaveFace(part *stl.Mesh, idx []int, groups []faceGroup, holes map[int][]faceLoop, flip bool) error {
+func repaveFace(part *stl.Mesh, idx []int, groups []faceGroup, holes map[int][]faceLoop, flip bool) ([]stl.Tri, error) {
 	drop := make(map[int]bool, len(idx))
 	for _, i := range idx {
 		drop[i] = true
@@ -534,7 +571,7 @@ func repaveFace(part *stl.Mesh, idx []int, groups []faceGroup, holes map[int][]f
 		merged := bridgeHoles(g.Outer, append(append([]faceLoop{}, g.Holes...), holes[gi]...))
 		tris, ok := earClip(merged)
 		if !ok {
-			return fmt.Errorf("could not re-triangulate a cut face around its pins")
+			return nil, fmt.Errorf("could not re-triangulate a cut face around its pins")
 		}
 		for _, tr := range tris {
 			t := stl.Tri{A: merged[tr[0]].P3, B: merged[tr[1]].P3, C: merged[tr[2]].P3}
@@ -547,8 +584,7 @@ func repaveFace(part *stl.Mesh, idx []int, groups []faceGroup, holes map[int][]f
 		}
 	}
 
-	part.Tris = keep
-	return nil
+	return keep, nil
 }
 
 func loopBounds(l faceLoop) (lo, hi pt2) {
