@@ -89,8 +89,30 @@ func TestReadRejectsTruncatedFile(t *testing.T) {
 	}
 	// The message must name the real problem. Before this was fixed, a truncated
 	// binary file produced an ASCII parser error instead.
-	if !strings.Contains(err.Error(), "truncated or corrupt") {
+	if !strings.Contains(err.Error(), "does not match the file length") {
 		t.Errorf("error does not name the problem: %v", err)
+	}
+}
+
+// A file that is neither ASCII nor binary STL must not be given a fabricated
+// diagnosis derived from whatever bytes sit at offset 80. An earlier version of
+// Read confidently reported such files as truncated binary STLs "declaring"
+// millions of triangles read out of noise.
+func TestReadRejectsNonSTLBinaryWithoutInventingATriangleCount(t *testing.T) {
+	raw := make([]byte, 200)
+	for i := range raw {
+		raw[i] = byte(i*7 + 3) // arbitrary non-text bytes
+	}
+
+	_, err := Read(bytes.NewReader(raw), int64(len(raw)))
+	if err == nil {
+		t.Fatal("expected an error for a non-STL binary file")
+	}
+	if strings.Contains(err.Error(), "triangles") {
+		t.Errorf("error invents a triangle count from non-STL data: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a recognised STL file") {
+		t.Errorf("error does not say the file is unrecognised: %v", err)
 	}
 }
 

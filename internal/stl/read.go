@@ -25,19 +25,46 @@ func Read(r io.ReaderAt, size int64) (*Mesh, error) {
 			if 84+binaryTriSize*count == size {
 				return readBinary(r, size)
 			}
-			// The size does not match a binary file. Try ASCII, but if that fails
-			// too, a truncated or corrupt binary file is the likelier explanation
-			// and saying so is far more useful than relaying a parse complaint
-			// about a file that was never ASCII.
-			m, asciiErr := readASCII(r, size)
-			if asciiErr == nil {
-				return m, nil
-			}
-			return nil, fmt.Errorf("file is %d bytes and is not valid ASCII STL (%v); read as binary STL its header declares %d triangles, which would require %d bytes — the file is truncated or corrupt",
-				size, asciiErr, count, 84+binaryTriSize*count)
 		}
 	}
-	return readASCII(r, size)
+
+	// The size did not match a binary file. Decide what this is by looking at the
+	// content rather than at the triangle count: those four bytes at offset 80 are
+	// meaningless in a file that is not binary STL, and a diagnosis derived from
+	// them would be confident and wrong.
+	if looksLikeText(r, size) {
+		return readASCII(r, size)
+	}
+	if size >= 84 {
+		return nil, fmt.Errorf("not a recognised STL file: %d bytes of binary data whose declared triangle count does not match the file length", size)
+	}
+	return nil, fmt.Errorf("not a recognised STL file: only %d bytes, too short for a binary header and not ASCII text", size)
+}
+
+// looksLikeText reports whether the start of r is printable ASCII, which is what
+// separates an ASCII STL from binary data. Only the first 512 bytes are examined;
+// that is ample to classify a file whose second line is already "facet normal".
+func looksLikeText(r io.ReaderAt, size int64) bool {
+	n := size
+	if n > 512 {
+		n = 512
+	}
+	if n == 0 {
+		return false
+	}
+	buf := make([]byte, n)
+	if _, err := r.ReadAt(buf, 0); err != nil && err != io.EOF {
+		return false
+	}
+	for _, b := range buf {
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func ReadFile(path string) (*Mesh, error) {
