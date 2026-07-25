@@ -590,6 +590,10 @@ import (
 	"stl-cutter/internal/geom"
 )
 
+// Detection must never derive a diagnosis from the four bytes at offset 80 unless
+// the size arithmetic already confirmed the file is binary — see
+// TestReadRejectsNonSTLBinaryWithoutInventingATriangleCount below.
+
 func TestBinaryRoundTripPreservesTriangles(t *testing.T) {
 	in := unitCube()
 	var buf bytes.Buffer
@@ -662,8 +666,38 @@ func TestReadRejectsTruncatedFile(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 	raw := buf.Bytes()[:buf.Len()-20] // lop off part of the last triangle
-	if _, err := Read(bytes.NewReader(raw), int64(len(raw))); err == nil {
+
+	_, err := Read(bytes.NewReader(raw), int64(len(raw)))
+	if err == nil {
 		t.Fatal("expected an error for a truncated file")
+	}
+	// Assert on the message, not just on failure. An earlier version of Read fell
+	// through to the ASCII parser here and reported an ASCII grammar complaint
+	// about a file that was plainly binary.
+	if !strings.Contains(err.Error(), "does not match the file length") {
+		t.Errorf("error does not name the problem: %v", err)
+	}
+}
+
+// A file that is neither ASCII nor binary STL must not be given a fabricated
+// diagnosis derived from whatever bytes sit at offset 80. An earlier version of
+// Read confidently reported such files as truncated binary STLs "declaring"
+// millions of triangles read out of noise.
+func TestReadRejectsNonSTLBinaryWithoutInventingATriangleCount(t *testing.T) {
+	raw := make([]byte, 200)
+	for i := range raw {
+		raw[i] = byte(i*7 + 3) // arbitrary non-text bytes
+	}
+
+	_, err := Read(bytes.NewReader(raw), int64(len(raw)))
+	if err == nil {
+		t.Fatal("expected an error for a non-STL binary file")
+	}
+	if strings.Contains(err.Error(), "triangles") {
+		t.Errorf("error invents a triangle count from non-STL data: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a recognised STL file") {
+		t.Errorf("error does not say the file is unrecognised: %v", err)
 	}
 }
 
@@ -795,7 +829,44 @@ func Read(r io.ReaderAt, size int64) (*Mesh, error) {
 			}
 		}
 	}
-	return readASCII(r, size)
+
+	// The size did not match a binary file. Decide what this is from the content,
+	// not from the triangle count: those four bytes at offset 80 are meaningless
+	// in a file that is not binary STL, and a diagnosis derived from them would be
+	// confident and wrong.
+	if looksLikeText(r, size) {
+		return readASCII(r, size)
+	}
+	if size >= 84 {
+		return nil, fmt.Errorf("not a recognised STL file: %d bytes of binary data whose declared triangle count does not match the file length", size)
+	}
+	return nil, fmt.Errorf("not a recognised STL file: only %d bytes, too short for a binary header and not ASCII text", size)
+}
+
+// looksLikeText reports whether the start of r is printable ASCII, which is what
+// separates an ASCII STL from binary data. Only the first 512 bytes are examined;
+// that is ample to classify a file whose second line is already "facet normal".
+func looksLikeText(r io.ReaderAt, size int64) bool {
+	n := size
+	if n > 512 {
+		n = 512
+	}
+	if n == 0 {
+		return false
+	}
+	buf := make([]byte, n)
+	if _, err := r.ReadAt(buf, 0); err != nil && err != io.EOF {
+		return false
+	}
+	for _, b := range buf {
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		if b < 0x20 || b > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func ReadFile(path string) (*Mesh, error) {
