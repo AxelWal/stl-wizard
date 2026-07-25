@@ -34,7 +34,10 @@ export function initViewer(container) {
 
   const resize = () => {
     const { clientWidth: w, clientHeight: h } = container;
-    renderer.setSize(w, h, false);
+    // Let three.js set the canvas' CSS size too. Without it the canvas' CSS size
+    // falls back to its attribute size — devicePixelRatio times too big — which
+    // grows the flex item, refires this observer, and runs away.
+    renderer.setSize(w, h);
     camera.aspect = w / Math.max(h, 1);
     camera.updateProjectionMatrix();
   };

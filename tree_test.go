@@ -27,6 +27,17 @@ func TestNewTreeHasASingleSelectableRoot(t *testing.T) {
 	}
 }
 
+// A model that is not a closed solid must be flagged the moment it is loaded,
+// not only after it is cut.
+func TestNewTreeFlagsANonWatertightModel(t *testing.T) {
+	if tr := NewTree("holed.stl", fixtures.NonManifold()); tr.Root.Watertight {
+		t.Error("a mesh with a hole was reported as a closed solid on load")
+	}
+	if tr := NewTree("cube.stl", fixtures.Cube(10)); !tr.Root.Watertight {
+		t.Error("a closed cube was reported as not watertight")
+	}
+}
+
 func TestRootRecordsMeasurements(t *testing.T) {
 	tr := NewTree("cube.stl", fixtures.Cube(10))
 

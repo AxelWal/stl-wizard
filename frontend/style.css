@@ -6,7 +6,8 @@ html, body { margin: 0; height: 100%; font: 13px/1.5 system-ui, sans-serif; }
   background: #1e1e1e; color: #ddd; border-right: 1px solid #000;
 }
 #sidebar h1 { font-size: 14px; margin: 0 0 12px; }
-#viewport { flex: 1; position: relative; background: #2b2b2b; }
+/* overflow: hidden stops an oversized canvas from growing this flex item. */
+#viewport { flex: 1; position: relative; background: #2b2b2b; overflow: hidden; }
 #viewport canvas { display: block; }
 button { width: 100%; padding: 6px; margin-bottom: 8px; cursor: pointer; }
 #status { color: #999; }

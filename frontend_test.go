@@ -139,6 +139,108 @@ func TestVendoredImportsResolve(t *testing.T) {
 	}
 }
 
+// ourJSFiles walks the frontend modules we wrote, skipping the vendored three.js
+// and the generated Wails bindings, neither of which is ours to police.
+func ourJSFiles(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir("frontend", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "vendor" || d.Name() == "wailsjs" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".js" {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[path] = string(src)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking frontend: %v", err)
+	}
+	return out
+}
+
+// Every getElementById("x") must find an id="x" in index.html. A renamed or
+// dropped element makes the call return null, and the very next line that touches
+// it throws — during module evaluation, so the whole page blanks. The Go build
+// and every Go test stay green, because none of them parse the HTML.
+func TestElementIDsUsedByJSExistInTheHTML(t *testing.T) {
+	html, err := os.ReadFile(filepath.Join("frontend", "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	idRe := regexp.MustCompile(`\bid="([^"]+)"`)
+	ids := map[string]bool{}
+	for _, m := range idRe.FindAllStringSubmatch(string(html), -1) {
+		ids[m[1]] = true
+	}
+
+	getRe := regexp.MustCompile(`getElementById\(\s*["']([^"']+)["']\s*\)`)
+	var checked int
+	for path, src := range ourJSFiles(t) {
+		for _, m := range getRe.FindAllStringSubmatch(src, -1) {
+			checked++
+			if !ids[m[1]] {
+				t.Errorf("%s calls getElementById(%q), but index.html has no element with that id", path, m[1])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no getElementById calls were checked; the scanner is not matching anything")
+	}
+}
+
+// Every name in `import { A, B } from "./y.js"` must actually be exported by
+// y.js. A missing named export is not a runtime error you can catch — the module
+// graph fails to link and nothing on the page runs at all. Nothing in the Go
+// build reads these files, so only a check like this one can see it.
+func TestNamedImportsHaveMatchingExports(t *testing.T) {
+	files := ourJSFiles(t)
+
+	// Matches the braces of `import { a, b as c } from "./spec.js"`.
+	importRe := regexp.MustCompile(`(?s)import\s*\{([^}]*)\}\s*from\s*['"](\./[^'"]+)['"]`)
+
+	var checked int
+	for path, src := range files {
+		for _, m := range importRe.FindAllStringSubmatch(src, -1) {
+			target := filepath.Join(filepath.Dir(path), m[2])
+			targetSrc, ok := files[target]
+			if !ok {
+				continue // existence is TestFrontendRelativeImportsResolve's job
+			}
+			for _, name := range strings.Split(m[1], ",") {
+				name = strings.TrimSpace(name)
+				// `x as y` imports x; the local alias is irrelevant here.
+				if i := strings.Index(name, " as "); i >= 0 {
+					name = strings.TrimSpace(name[:i])
+				}
+				if name == "" {
+					continue
+				}
+				checked++
+				exportRe := regexp.MustCompile(`(?m)^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|var)\s+` + regexp.QuoteMeta(name) + `\b`)
+				listRe := regexp.MustCompile(`(?s)export\s*\{[^}]*\b` + regexp.QuoteMeta(name) + `\b[^}]*\}`)
+				if !exportRe.MatchString(targetSrc) && !listRe.MatchString(targetSrc) {
+					t.Errorf("%s imports %q from %s, which does not export it", path, name, m[2])
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no named imports were checked; the scanner is not matching anything")
+	}
+}
+
 // Every bare specifier our own modules import must be covered by the import map,
 // or the browser will refuse to resolve it.
 func TestBareImportsAreCoveredByTheImportMap(t *testing.T) {

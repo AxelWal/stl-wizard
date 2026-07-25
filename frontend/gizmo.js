@@ -7,6 +7,7 @@ let quad;       // the translucent rectangle
 let arrow;      // points along the normal, toward the part that gets cut off
 let frame;      // outline, so the extent is readable against the model
 let transform;
+let helper;     // what TransformControls actually renders — see initGizmo
 let changeHandlers = [];
 
 // Width and height are stored here rather than baked into the geometry, so the
@@ -76,7 +77,12 @@ function installHandleDragging() {
 
     dragging = hit.object;
     controlsRef().enabled = false;   // do not orbit mid-resize
-    transform.enabled = false;       // do not also translate
+    // TransformControls' own pointerdown ran first on this same canvas. If it
+    // latched an axis, disabling it now would make its pointerup bail out and
+    // leave dragging stuck true, killing move and rotate for the session.
+    if (transform.dragging === false) {
+      transform.enabled = false;     // do not also translate
+    }
     el.setPointerCapture(event.pointerId);
     event.stopPropagation();
   });
@@ -158,7 +164,6 @@ export function initGizmo() {
   transform = new TransformControls(cameraRef(), domElement());
   transform.attach(group);
   transform.setMode("translate");
-  transform.visible = false;
   transform.enabled = false;
 
   // Orbiting while dragging a handle would fight the drag.
@@ -168,8 +173,11 @@ export function initGizmo() {
   transform.addEventListener("objectChange", emitChange);
 
   // three.js changed how TransformControls is added to a scene; newer versions
-  // expose a helper object. Support both rather than pinning behaviour.
-  const helper = transform.getHelper ? transform.getHelper() : transform;
+  // expose a helper object. Support both rather than pinning behaviour. The
+  // helper is what renders, and attach() above made it visible, so visibility
+  // has to be toggled here — transform.visible is a property nothing reads.
+  helper = transform.getHelper ? transform.getHelper() : transform;
+  helper.visible = false;
   sceneRoot().add(helper);
 
   buildHandles();
@@ -208,7 +216,7 @@ export function showGizmo() {
     arrow.setLength(span * 0.4, span * 0.1, span * 0.05);
   }
   group.visible = true;
-  transform.visible = true;
+  helper.visible = true;
   transform.enabled = true;
   emitChange();
 }
@@ -226,7 +234,7 @@ export function hideGizmo() {
   // rectangle the user can no longer see.
   dragging = null;
   group.visible = false;
-  transform.visible = false;
+  helper.visible = false;
   transform.enabled = false;
 }
 

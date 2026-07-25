@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
 )
 
@@ -73,7 +74,12 @@ func (t *Tree) newPart(name string, m *stl.Mesh, watertight bool) *Part {
 
 func NewTree(name string, root *stl.Mesh) *Tree {
 	t := &Tree{ModelName: name, seq: treeSeq.Add(1)}
-	t.Root = t.newPart("whole", root, true)
+	// Check the loaded mesh rather than assuming it is sound. A model that is
+	// already not a closed solid must say so before it is ever cut — reporting
+	// "closed: yes" for it is exactly the silent-bad-part outcome this app is
+	// meant to rule out.
+	watertight := meshcheck.Check(root, root.Epsilon()).OK()
+	t.Root = t.newPart("whole", root, watertight)
 	t.SelectedID = t.Root.ID
 	return t
 }

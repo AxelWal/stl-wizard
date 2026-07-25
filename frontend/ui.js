@@ -33,8 +33,11 @@ heightEl.addEventListener("input", () => setExtent(extent().width, parseFloat(he
 
 // Keep the number fields in step with the gizmo, whichever moved.
 onChange((input) => {
-  widthEl.value = input.width.toFixed(2);
-  heightEl.value = input.height.toFixed(2);
+  // Writing .value into a focused number field moves the caret to the end, so a
+  // second keystroke can never land. Leave whichever field the user is typing in
+  // alone; it is already showing what they typed.
+  if (document.activeElement !== widthEl) widthEl.value = input.width.toFixed(2);
+  if (document.activeElement !== heightEl) heightEl.value = input.height.toFixed(2);
 });
 
 function message(text, kind = "warn") {
@@ -103,10 +106,16 @@ async function render(tree) {
 
 document.getElementById("open").addEventListener("click", async () => {
   try {
+    const previousId = currentTree && currentTree.root ? currentTree.root.id : null;
     const tree = await OpenModel();
+    if (!tree) return; // nothing open, nothing to show
     await render(tree);
-    frameAll();
-    showGizmo();
+    // OpenModel returns the current view unchanged when the dialog is cancelled,
+    // so re-framing here would throw away a plane the user had just placed.
+    if (tree.root && tree.root.id !== previousId) {
+      frameAll();
+      showGizmo();
+    }
   } catch (err) {
     statusEl.textContent = String(err);
   }
