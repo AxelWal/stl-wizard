@@ -117,7 +117,9 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 // SplitProgress is Split with an optional progress callback.
 //
 // onProgress receives a fraction in [0,1], reported coarsely and monotonically,
-// always ending at exactly 1. It is called from the calling goroutine and must
+// ending at exactly 1 when the cut succeeds. On an error return the last value
+// reported may be short of 1, so a caller driving a progress bar should clear it
+// on completion rather than waiting to see 1. It is called from the calling goroutine and must
 // not block — a slow callback slows the cut. Pass nil for no reporting.
 //
 // The contract is deliberately loose about how many times it fires: a cut on a

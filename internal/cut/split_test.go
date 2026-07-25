@@ -348,3 +348,46 @@ func TestSplitMatchesSplitProgressWithNoCallback(t *testing.T) {
 		t.Error("Split and SplitProgress produced different geometry")
 	}
 }
+
+// The periodic reports during the part-1 pass fire every 4096 triangles, and both
+// other progress tests use meshes far below that, so this is the only test that
+// exercises that arithmetic at all.
+func TestSplitProgressReportsDuringTheLongPass(t *testing.T) {
+	m := fixtures.UVSphere(10, 120, 100)
+	if len(m.Tris) <= 4096 {
+		t.Fatalf("fixture has %d triangles; this test needs more than the 4096 reporting interval", len(m.Tris))
+	}
+	s := SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 100, 100)
+
+	var seen []float64
+	if _, err := SplitProgress(m, s, func(f float64) { seen = append(seen, f) }); err != nil {
+		t.Fatalf("SplitProgress: %v", err)
+	}
+
+	// Five plane reports plus at least one periodic report plus the final 1.
+	if len(seen) < 7 {
+		t.Errorf("got %d reports %v, want at least 7 — the periodic path did not fire", len(seen), seen)
+	}
+	// At least one report must land strictly between the plane phase and the end,
+	// which is what the periodic path produces.
+	periodic := 0
+	for _, f := range seen {
+		if f > 0.5 && f < 1 {
+			periodic++
+		}
+	}
+	if periodic == 0 {
+		t.Errorf("no report fell between 0.5 and 1 in %v; the periodic path did not fire", seen)
+	}
+	for i, f := range seen {
+		if f < 0 || f > 1 {
+			t.Errorf("report %d is %v, want a fraction in [0,1]", i, f)
+		}
+		if i > 0 && f < seen[i-1] {
+			t.Errorf("progress went backwards: %v then %v", seen[i-1], f)
+		}
+	}
+	if last := seen[len(seen)-1]; last != 1 {
+		t.Errorf("final report is %v, want exactly 1", last)
+	}
+}
