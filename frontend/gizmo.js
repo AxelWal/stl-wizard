@@ -113,14 +113,27 @@ export function showGizmo() {
 }
 
 export function hideGizmo() {
+  // Restore orbiting first. TransformControls' pointer handlers all bail out
+  // when disabled, including the one that ends a drag and re-enables the
+  // camera — so disabling mid-drag would leave the camera dead with no error
+  // and no way back.
+  if (transform.dragging) {
+    controlsRef().enabled = true;
+  }
   group.visible = false;
   transform.visible = false;
   transform.enabled = false;
 }
 
 export function setExtent(w, h) {
-  width = Math.max(w, 1e-6);
-  height = Math.max(h, 1e-6);
+  // An emptied number field yields NaN, and Math.max(NaN, x) is NaN — which
+  // would rebuild the quad with NaN vertices.
+  if (Number.isFinite(w)) {
+    width = Math.max(w, 1e-6);
+  }
+  if (Number.isFinite(h)) {
+    height = Math.max(h, 1e-6);
+  }
   rebuildQuad();
   emitChange();
 }

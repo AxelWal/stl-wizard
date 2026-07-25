@@ -92,6 +92,53 @@ func TestImportMapTargetsExist(t *testing.T) {
 	}
 }
 
+// The vendored three.js is not ours to police, but it must at least be COMPLETE.
+// Modern three.js splits build/ into three.core.js plus thin re-export shims, and
+// vendoring only the shim leaves an import that resolves to nothing: every module
+// importing three fails to load and the window renders blank, while the Go build
+// and every Go test stay green. That is exactly what happened once.
+func TestVendoredImportsResolve(t *testing.T) {
+	root := filepath.Join("frontend", "vendor")
+	if _, err := os.Stat(root); err != nil {
+		t.Skip("no vendored assets")
+	}
+
+	importRe := regexp.MustCompile(`(?m)(?:^|\s)(?:import|export)[^'"\n]*\bfrom\s+['"]([^'"]+)['"]`)
+
+	var checked int
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".js" {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range importRe.FindAllStringSubmatch(string(src), -1) {
+			spec := m[1]
+			if !strings.HasPrefix(spec, "./") && !strings.HasPrefix(spec, "../") {
+				continue // bare specifiers are the import map's problem
+			}
+			checked++
+			target := filepath.Join(filepath.Dir(path), spec)
+			if _, err := os.Stat(target); err != nil {
+				t.Errorf("%s imports %q, which resolves to %s and is not vendored",
+					path, spec, target)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	if checked == 0 {
+		t.Fatal("no relative imports found in the vendored tree; the scanner is not matching anything")
+	}
+}
+
 // Every bare specifier our own modules import must be covered by the import map,
 // or the browser will refuse to resolve it.
 func TestBareImportsAreCoveredByTheImportMap(t *testing.T) {
