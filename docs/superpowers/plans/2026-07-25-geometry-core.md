@@ -549,7 +549,7 @@ func (m *Mesh) Epsilon() float64 {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `go test ./internal/stl/ -v`
-Expected: PASS, seven tests.
+Expected: PASS, six tests.
 
 - [ ] **Step 5: Commit**
 
