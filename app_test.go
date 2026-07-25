@@ -141,17 +141,20 @@ func TestCutBoundedToOneArmOfTheU(t *testing.T) {
 		t.Errorf("expected a watertight cut; warnings: %v", out.Warnings)
 	}
 
-	var volumes []float64
-	for _, c := range out.Tree.Root.Children {
-		volumes = append(volumes, c.Volume)
+	children := out.Tree.Root.Children
+	if len(children) != 2 {
+		t.Fatalf("got %d children, want 2", len(children))
 	}
-	// part1 keeps 7500, part2 takes the 1500 arm top.
-	if len(volumes) != 2 {
-		t.Fatalf("got %d children, want 2", len(volumes))
+
+	// Assert each volume, not just the sum. Any valid partition of the mesh sums
+	// to 9000 — a cut that severed BOTH arms gives [6000, 3000] and would pass a
+	// sum-only check, which is exactly the regression this test exists to catch.
+	if got := children[0].Volume; math.Abs(got-7500) > 1 {
+		t.Errorf("part 1 volume = %v, want 7500 — the material left behind", got)
 	}
-	got := volumes[0] + volumes[1]
-	if got < 8999 || got > 9001 {
-		t.Errorf("volumes %v sum to %v, want 9000", volumes, got)
+	if got := children[1].Volume; math.Abs(got-1500) > 1 {
+		t.Errorf("part 2 volume = %v, want 1500 — the left arm's top only; "+
+			"3000 would mean both arms were cut", got)
 	}
 }
 
@@ -197,6 +200,27 @@ func TestCutRejectsANonFinitePlane(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected an error for a non-finite extent")
+	}
+}
+
+// Cutting a part that has already been split must return an error, not panic.
+// A split part has no mesh of its own, so without the guard the geometry library
+// would be handed a nil mesh.
+func TestCutRefusesAPartThatWasAlreadySplit(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	plane := PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}
+	if _, err := app.Cut(id, plane); err != nil {
+		t.Fatalf("first Cut: %v", err)
+	}
+	if _, err := app.Cut(id, plane); err == nil {
+		t.Error("expected an error cutting a part that has already been split")
 	}
 }
 
