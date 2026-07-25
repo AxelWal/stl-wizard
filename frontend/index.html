@@ -19,6 +19,14 @@
         <h1>STL Cutter</h1>
         <button id="open">Open STL…</button>
         <p id="status">No model loaded.</p>
+        <div id="plane-controls" hidden>
+          <h2>Cutting plane</h2>
+          <button id="mode-translate">Move</button>
+          <button id="mode-rotate">Rotate</button>
+          <label>Width <input id="plane-width" type="number" step="0.1" min="0.01" /></label>
+          <label>Height <input id="plane-height" type="number" step="0.1" min="0.01" /></label>
+          <button id="do-cut">Cut</button>
+        </div>
       </aside>
       <main id="viewport"></main>
     </div>
