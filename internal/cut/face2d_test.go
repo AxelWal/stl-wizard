@@ -141,3 +141,51 @@ func groupHoleCounts(gs []faceGroup) []int {
 	}
 	return out
 }
+
+// Two rings touching at a single shared vertex are two separate solid regions.
+// assembleLoops emits exactly this shape when it splits a pinch point, and the old
+// vertex-based containment probe merged them, demoting one to a hole of the other.
+func TestGroupLoopsKeepsRingsTouchingAtAVertexSeparate(t *testing.T) {
+	// Two unit squares meeting at the origin, diagonally opposite each other.
+	a := projectZ(Polygon{{-2, 0, 0}, {0, 0, 0}, {0, 2, 0}, {-2, 2, 0}})
+	b := projectZ(Polygon{{0, -2, 0}, {2, -2, 0}, {2, 0, 0}, {0, 0, 0}})
+
+	groups := groupLoops([]faceLoop{a, b})
+
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups with hole counts %v, want 2 separate regions", len(groups), groupHoleCounts(groups))
+	}
+	for i, g := range groups {
+		if len(g.Holes) != 0 {
+			t.Errorf("group %d has %d holes, want 0 — neither ring encloses the other", i, len(g.Holes))
+		}
+		if signedArea2(g.Outer) <= 0 {
+			t.Errorf("group %d outer is not counter-clockwise", i)
+		}
+	}
+}
+
+// Order of the input must not change the verdict. The old probe gave opposite
+// answers depending on which loop was asked about first.
+func TestGroupLoopsTouchingRingsAreOrderIndependent(t *testing.T) {
+	a := projectZ(Polygon{{-2, 0, 0}, {0, 0, 0}, {0, 2, 0}, {-2, 2, 0}})
+	b := projectZ(Polygon{{0, -2, 0}, {2, -2, 0}, {2, 0, 0}, {0, 0, 0}})
+
+	forward := groupLoops([]faceLoop{a, b})
+	reverse := groupLoops([]faceLoop{b, a})
+
+	if len(forward) != len(reverse) {
+		t.Fatalf("order changed the grouping: %d vs %d groups", len(forward), len(reverse))
+	}
+	if len(forward) != 2 {
+		t.Fatalf("got %d groups, want 2 in both orders", len(forward))
+	}
+}
+
+// A genuine hole must still be found now that containment uses edge midpoints.
+func TestGroupLoopsStillFindsAHoleAfterTheProbeChange(t *testing.T) {
+	groups := groupLoops([]faceLoop{projectZ(square(0, 0, 5)), projectZ(square(0, 0, 2))})
+	if len(groups) != 1 || len(groups[0].Holes) != 1 {
+		t.Fatalf("got %d groups with hole counts %v, want one group with one hole", len(groups), groupHoleCounts(groups))
+	}
+}

@@ -70,15 +70,52 @@ type faceGroup struct {
 	Holes []faceLoop
 }
 
+// probePoints returns points lying on l that are safe to test for containment in
+// another loop.
+//
+// Cap loops never cross, so every point of l falls on the same side of any other
+// loop — a point on l's own boundary is therefore a valid probe. A *vertex* is
+// not: two loops that touch do so at a shared welded vertex, and a crossing-number
+// test is direction-dependent exactly on a boundary. Edge midpoints cannot be
+// shared that way. Three are taken so no single degenerate answer decides it.
+func probePoints(l faceLoop) []pt2 {
+	n := len(l)
+	out := make([]pt2, 0, 3)
+	for k := 0; k < 3 && k < n; k++ {
+		i := (k * n) / 3
+		j := (i + 1) % n
+		out = append(out, pt2{
+			X: (l[i].P2.X + l[j].P2.X) / 2,
+			Y: (l[i].P2.Y + l[j].P2.Y) / 2,
+		})
+	}
+	return out
+}
+
+// containsLoop reports whether outer encloses inner, by majority vote of inner's
+// probe points.
+func containsLoop(outer, inner faceLoop) bool {
+	probes := probePoints(inner)
+	if len(probes) == 0 {
+		return false
+	}
+	votes := 0
+	for _, p := range probes {
+		if pointInLoop(p, outer) {
+			votes++
+		}
+	}
+	return votes*2 > len(probes)
+}
+
 // groupLoops sorts cap loops into solid regions by nesting depth. A loop nested
 // an even number of times bounds material; an odd number bounds a void. So an
 // island inside a hole is a solid region in its own right, not a hole of the
 // outermost loop.
 //
-// ponytail: nesting is tested with one vertex per loop, which assumes loops do
-// not touch. Cross-sections of a solid satisfy that. Upgrade path if
-// self-touching cross-sections turn up: test an interior point derived from the
-// loop instead of one of its vertices.
+// Containment is judged from edge midpoints rather than vertices, because two
+// loops may legitimately share a vertex: assembleLoops splits a pinch point into
+// two rings that meet there.
 func groupLoops(loops []faceLoop) []faceGroup {
 	n := len(loops)
 	if n == 0 {
@@ -87,12 +124,11 @@ func groupLoops(loops []faceLoop) []faceGroup {
 
 	depth := make([]int, n)
 	for i := range loops {
-		if len(loops[i]) == 0 {
+		if len(loops[i]) < 3 {
 			continue
 		}
-		probe := loops[i][0].P2
 		for j := range loops {
-			if i != j && pointInLoop(probe, loops[j]) {
+			if i != j && containsLoop(loops[j], loops[i]) {
 				depth[i]++
 			}
 		}
@@ -127,13 +163,12 @@ func groupLoops(loops []faceLoop) []faceGroup {
 		if signedArea2(l) > 0 {
 			l = reverseLoop(l)
 		}
-		probe := loops[i][0].P2
 		host := -1
 		for j := range loops {
 			if j == i || depth[j] != depth[i]-1 {
 				continue
 			}
-			if pointInLoop(probe, loops[j]) {
+			if containsLoop(loops[j], loops[i]) {
 				host = j
 				break
 			}
