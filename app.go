@@ -28,6 +28,15 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+// emit sends an event to the frontend, or does nothing when there is no frontend
+// — which is the case in unit tests, where a.ctx is never set.
+func (a *App) emit(name string, data ...interface{}) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, name, data...)
+}
+
 // TreeView is the tree as the frontend sees it. It is a separate type from Tree
 // because the frontend needs CanUndo, which is derived from history the tree
 // keeps private, and because Part.Mesh must never be serialised.
@@ -156,6 +165,9 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 		return nil, err
 	}
 
+	a.emit("cut:start")
+	defer a.emit("cut:done")
+
 	var res *cut.Result
 	err := a.session.WithTree(func(tr *Tree) error {
 		part := tr.Find(partID)
@@ -167,7 +179,9 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 		}
 
 		var err error
-		res, err = cut.Split(part.Mesh, spec)
+		res, err = cut.SplitProgress(part.Mesh, spec, func(f float64) {
+			a.emit("cut:progress", f)
+		})
 		if err != nil {
 			return err
 		}

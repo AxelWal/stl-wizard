@@ -111,6 +111,25 @@ type taggedPoly struct {
 // fraction into the material is the answer, and a caller placing planes
 // programmatically should avoid exact coincidence with face positions.
 func Split(m *stl.Mesh, s Spec) (*Result, error) {
+	return SplitProgress(m, s, nil)
+}
+
+// SplitProgress is Split with an optional progress callback.
+//
+// onProgress receives a fraction in [0,1], reported coarsely and monotonically,
+// always ending at exactly 1. It is called from the calling goroutine and must
+// not block — a slow callback slows the cut. Pass nil for no reporting.
+//
+// The contract is deliberately loose about how many times it fires: a cut on a
+// two-million-triangle model runs for about ten seconds, and callers need
+// something to show, but pinning the reports to the current loop structure would
+// freeze that structure.
+func SplitProgress(m *stl.Mesh, s Spec, onProgress func(float64)) (*Result, error) {
+	report := func(f float64) {
+		if onProgress != nil {
+			onProgress(f)
+		}
+	}
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -145,7 +164,7 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 		current = append(current, taggedPoly{poly: Polygon{t.A, t.B, t.C}})
 	}
 
-	for _, p := range planes {
+	for planeIndex, p := range planes {
 		var insidePolys []Polygon
 		var next []taggedPoly
 
@@ -179,6 +198,7 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 			next = append(next, taggedPoly{poly: Polygon{r.A, r.B, r.C}, isCap: true})
 		}
 		current = next
+		report(0.1 * float64(planeIndex+1))
 	}
 
 	part2 := &stl.Mesh{}
@@ -197,7 +217,7 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 	// Those cuts are invisible to the untouched neighbouring face across the
 	// edge, and every one of them is an open edge.
 	part1 := &stl.Mesh{}
-	for _, t := range m.Tris {
+	for i, t := range m.Tris {
 		frag := Polygon{t.A, t.B, t.C}
 		for _, p := range planes {
 			frag, _ = splitPolygon(frag, p, eps)
@@ -218,6 +238,9 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 			res.LeftoverIncomplete++
 		}
 		part1.Tris = append(part1.Tris, tris...)
+		if (i+1)%4096 == 0 {
+			report(0.5 + 0.5*float64(i)/float64(len(m.Tris)))
+		}
 	}
 	if len(part1.Tris) == 0 {
 		return nil, errors.New("the cutting rectangle encloses the entire model — nothing would be left behind")
@@ -291,6 +314,7 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the cut-off part is not a closed solid: %s", rep))
 	}
 
+	report(1)
 	return res, nil
 }
 

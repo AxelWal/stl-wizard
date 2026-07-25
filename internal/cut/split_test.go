@@ -297,3 +297,54 @@ func TestSplitWarnsWhenThePlaneIsCoplanarWithFaces(t *testing.T) {
 		t.Errorf("warnings do not mention the coplanar faces: %v", r.Warnings)
 	}
 }
+
+// A cut on a large model takes seconds, so callers need to be able to show
+// progress. The contract is deliberately loose — coarse, monotonic, ending at 1 —
+// because tying it to internal loop structure would freeze that structure.
+func TestSplitProgressReportsMonotonicFractions(t *testing.T) {
+	m := fixtures.UVSphere(10, 48, 24)
+	s := SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 100, 100)
+
+	var seen []float64
+	res, err := SplitProgress(m, s, func(f float64) {
+		seen = append(seen, f)
+	})
+	if err != nil {
+		t.Fatalf("SplitProgress: %v", err)
+	}
+	if res == nil {
+		t.Fatal("no result")
+	}
+	if len(seen) < 2 {
+		t.Fatalf("got %d progress reports, want several", len(seen))
+	}
+	for i, f := range seen {
+		if f < 0 || f > 1 {
+			t.Errorf("report %d is %v, want a fraction in [0,1]", i, f)
+		}
+		if i > 0 && f < seen[i-1] {
+			t.Errorf("progress went backwards: %v then %v", seen[i-1], f)
+		}
+	}
+	if last := seen[len(seen)-1]; last != 1 {
+		t.Errorf("final report is %v, want exactly 1", last)
+	}
+}
+
+// The plain Split must behave identically, so no caller has to care.
+func TestSplitMatchesSplitProgressWithNoCallback(t *testing.T) {
+	m := fixtures.Cube(10)
+	s := SpecFromNormal(geom.Vec3{5, 5, 5}, geom.Vec3{0, 0, 1}, 100, 100)
+
+	a, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+	b, err := SplitProgress(m, s, nil)
+	if err != nil {
+		t.Fatalf("SplitProgress: %v", err)
+	}
+	if a.Part1.Volume() != b.Part1.Volume() || a.Part2.Volume() != b.Part2.Volume() {
+		t.Error("Split and SplitProgress produced different geometry")
+	}
+}
