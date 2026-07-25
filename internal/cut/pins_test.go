@@ -6,6 +6,7 @@ import (
 
 	"stl-cutter/internal/fixtures"
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
 )
 
@@ -296,5 +297,67 @@ func TestAxialClearanceIgnoresTheFaceItStartsOn(t *testing.T) {
 		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
 	if math.Abs(got-10) > 1e-6 {
 		t.Errorf("clearance = %v, want 10 — the floor it starts on must not count", got)
+	}
+}
+
+func TestCircleLoopIsClosedAndCorrectlySized(t *testing.T) {
+	l := circleLoop(pt2{0, 0}, 3, 32, geom.Vec3{}, geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0})
+	if len(l) != 32 {
+		t.Fatalf("got %d vertices, want 32", len(l))
+	}
+	for i, v := range l {
+		if got := math.Hypot(v.P2.X, v.P2.Y); math.Abs(got-3) > 1e-9 {
+			t.Errorf("vertex %d is %v from the centre, want 3", i, got)
+		}
+	}
+	// A hole must be wound clockwise so groupLoops treats it as one.
+	if signedArea2(l) >= 0 {
+		t.Error("a pin circle must be clockwise, so it reads as a hole")
+	}
+}
+
+func TestCircleLoopCarriesMatching3DPoints(t *testing.T) {
+	origin := geom.Vec3{0, 0, 5}
+	u := geom.Vec3{1, 0, 0}
+	v := geom.Vec3{0, 1, 0}
+	l := circleLoop(pt2{2, 0}, 1, 8, origin, u, v)
+
+	for i, fv := range l {
+		want := origin.Add(u.Scale(fv.P2.X)).Add(v.Scale(fv.P2.Y))
+		if fv.P3.Sub(want).Len() > 1e-9 {
+			t.Errorf("vertex %d: 3D point %v does not match its 2D position", i, fv.P3)
+		}
+	}
+}
+
+// A peg is a closed solid on its own: its wall plus its end disc plus the hole
+// it leaves in the face.
+func TestPinCylinderVolumeMatchesTheIdealPeg(t *testing.T) {
+	tris := pinCylinder(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, 1},
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, 5, 64, false)
+
+	// Close it with a disc at the base so the volume is measurable.
+	base := discAt(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, -1}, geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, 64)
+	m := &stl.Mesh{Tris: append(append([]stl.Tri{}, tris...), base...)}
+
+	want := math.Pi * 4 * 5
+	if got := m.Volume(); math.Abs(got-want)/want > 0.01 {
+		t.Errorf("peg volume = %v, want about %v", got, want)
+	}
+	if rep := meshcheck.Check(m, 1e-9); !rep.OK() {
+		t.Errorf("a capped peg should be a closed solid: %s", rep)
+	}
+}
+
+// A socket is the same shape wound the other way, so it subtracts rather than adds.
+func TestPinCylinderCavityHasNegativeVolume(t *testing.T) {
+	tris := pinCylinder(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, 1},
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, 5, 64, true)
+	base := discAt(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, 1}, geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, 64)
+	m := &stl.Mesh{Tris: append(append([]stl.Tri{}, tris...), base...)}
+
+	want := -math.Pi * 4 * 5
+	if got := m.Volume(); math.Abs(got-want)/math.Abs(want) > 0.01 {
+		t.Errorf("cavity volume = %v, want about %v", got, want)
 	}
 }

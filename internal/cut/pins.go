@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
 )
 
 // PinSpec describes the alignment pins to place on a cut face. All lengths are
@@ -273,6 +274,93 @@ func axialClearance(grid *rayGrid, centre, dir geom.Vec3, radius float64, u, v g
 		return 0
 	}
 	return worst
+}
+
+// pinSegments is how finely a pin's circle is tessellated. 32 keeps a 4mm pin's
+// facets well under a typical printer's resolution.
+const pinSegments = 32
+
+// circleLoop returns a pin's circle in a face's 2D coordinates, wound clockwise
+// so groupLoops reads it as a hole. The matching 3D points are carried, not
+// reconstructed, for the same reason the rest of the cap machinery carries them:
+// rebuilding coordinates from 2D rounds, and the rounding shows up as hairline
+// cracks.
+func circleLoop(centre pt2, r float64, segments int, origin, u, v geom.Vec3) faceLoop {
+	l := make(faceLoop, 0, segments)
+	for i := 0; i < segments; i++ {
+		// Negative angle, so the loop comes out clockwise.
+		a := -2 * math.Pi * float64(i) / float64(segments)
+		p := pt2{X: centre.X + r*math.Cos(a), Y: centre.Y + r*math.Sin(a)}
+		l = append(l, faceVert{
+			P2: p,
+			P3: origin.Add(u.Scale(p.X)).Add(v.Scale(p.Y)),
+		})
+	}
+	return l
+}
+
+// pinCylinder returns the side wall and closing disc of a pin.
+//
+// With cavity false it is a peg standing proud of the face: the wall faces away
+// from the axis and the disc closes its free end. With cavity true it is a
+// socket bored into the material: the same surface wound the other way, so it
+// faces into the bore and subtracts rather than adds.
+//
+// base is the centre of the circle where the pin meets the face; dir is the
+// direction it extends.
+func pinCylinder(base, dir, u, v geom.Vec3, r, length float64, segments int, cavity bool) []stl.Tri {
+	d := dir.Unit()
+	tip := base.Add(d.Scale(length))
+
+	ring := func(centre geom.Vec3, i int) geom.Vec3 {
+		a := 2 * math.Pi * float64(i) / float64(segments)
+		return centre.Add(u.Scale(r * math.Cos(a))).Add(v.Scale(r * math.Sin(a)))
+	}
+
+	out := make([]stl.Tri, 0, segments*4)
+	for i := 0; i < segments; i++ {
+		j := (i + 1) % segments
+		b0, b1 := ring(base, i), ring(base, j)
+		t0, t1 := ring(tip, i), ring(tip, j)
+
+		wall := []stl.Tri{
+			{A: b0, B: b1, C: t1},
+			{A: b0, B: t1, C: t0},
+		}
+		// The end disc, fanned from the tip's centre. B and C are t0, t1 (not
+		// t1, t0): the wall triangles above wind outward from the axis with
+		// that same b0->b1->t1->t0 vertex order, and matching the cap's fan
+		// order to it is what makes the cap face along +dir instead of into
+		// the pin.
+		cap := []stl.Tri{{A: tip, B: t0, C: t1}}
+
+		for _, tr := range append(wall, cap...) {
+			if cavity {
+				tr = tr.Reversed()
+			}
+			out = append(out, tr)
+		}
+	}
+	return out
+}
+
+// discAt returns a flat disc facing along normal. Used to close a pin for testing
+// and to floor a socket.
+func discAt(centre, normal, u, v geom.Vec3, r float64, segments int) []stl.Tri {
+	out := make([]stl.Tri, 0, segments)
+	ring := func(i int) geom.Vec3 {
+		a := 2 * math.Pi * float64(i) / float64(segments)
+		return centre.Add(u.Scale(r * math.Cos(a))).Add(v.Scale(r * math.Sin(a)))
+	}
+	for i := 0; i < segments; i++ {
+		j := (i + 1) % segments
+		tr := stl.Tri{A: centre, B: ring(i), C: ring(j)}
+		if tr.Normal().Dot(normal) < 0 {
+			tr = tr.Reversed()
+		}
+		out = append(out, tr)
+	}
+	return out
 }
 
 func loopBounds(l faceLoop) (lo, hi pt2) {
