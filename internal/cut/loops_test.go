@@ -137,6 +137,83 @@ func TestAssembleLoopsIsDeterministic(t *testing.T) {
 	}
 }
 
+// Two triangles meeting at a single pinch vertex are two rings, not one. Walked
+// from a leaf vertex, the old greedy walk emitted a single six-point
+// self-intersecting polygon and reported open = 0, giving no signal that the cap
+// it fed was malformed.
+func TestAssembleLoopsSplitsAPinchVertexIntoTwoRings(t *testing.T) {
+	w := geom.NewWelder(1e-9)
+	a := w.ID(geom.Vec3{1, 0, 0})
+	s := w.ID(geom.Vec3{0, 0, 0}) // the pinch
+	c := w.ID(geom.Vec3{-1, 0, 0})
+	d := w.ID(geom.Vec3{0, -1, 0})
+	b := w.ID(geom.Vec3{0, 1, 0})
+	edges := [][2]int{{a, s}, {s, c}, {c, d}, {d, s}, {s, b}, {b, a}}
+
+	loops, open := assembleLoops(edges, w)
+	if open != 0 {
+		t.Errorf("open = %d, want 0", open)
+	}
+	if len(loops) != 2 {
+		t.Fatalf("got %d loops with lengths %v, want two rings of 3", len(loops), loopLens(loops))
+	}
+	for i, l := range loops {
+		if len(l) != 3 {
+			t.Errorf("loop %d has %d vertices, want 3", i, len(l))
+		}
+		seen := map[geom.Vec3]bool{}
+		for _, v := range l {
+			if seen[v] {
+				t.Errorf("loop %d revisits %v — the polygon self-intersects", i, v)
+			}
+			seen[v] = true
+		}
+	}
+}
+
+// A dangling whisker attached to a pinch vertex must not consume the valid ring
+// it passes through. The old walk chased the whisker, failed to close, and
+// discarded the ring entirely.
+func TestAssembleLoopsKeepsAValidRingDespiteAWhisker(t *testing.T) {
+	w := geom.NewWelder(1e-9)
+	l := w.ID(geom.Vec3{-2, 0, 0})
+	m := w.ID(geom.Vec3{-1, 0, 0})
+	v := w.ID(geom.Vec3{0, 0, 0}) // pinch: whisker meets the triangle here
+	x := w.ID(geom.Vec3{1, 0, 0})
+	y := w.ID(geom.Vec3{0, 1, 0})
+	edges := [][2]int{{l, m}, {m, v}, {v, x}, {x, y}, {y, v}}
+
+	loops, open := assembleLoops(edges, w)
+	if len(loops) != 1 || (len(loops) == 1 && len(loops[0]) != 3) {
+		t.Fatalf("got %d loops with lengths %v, want the one triangle v-x-y", len(loops), loopLens(loops))
+	}
+	if open != 1 {
+		t.Errorf("open = %d, want 1 for the whisker", open)
+	}
+}
+
+// One open path is one hole. Starting from an interior vertex of the path used to
+// walk it outward in both directions and report two.
+func TestAssembleLoopsCountsOneOpenPathOnce(t *testing.T) {
+	w := geom.NewWelder(1e-9)
+	// Register the midpoint first so it takes the lowest id, which is what made
+	// the old walk start there.
+	mid := w.ID(geom.Vec3{0, 0, 0})
+	p0 := w.ID(geom.Vec3{-2, 0, 0})
+	p1 := w.ID(geom.Vec3{-1, 0, 0})
+	p3 := w.ID(geom.Vec3{1, 0, 0})
+	p4 := w.ID(geom.Vec3{2, 0, 0})
+	edges := [][2]int{{p0, p1}, {p1, mid}, {mid, p3}, {p3, p4}}
+
+	loops, open := assembleLoops(edges, w)
+	if len(loops) != 0 {
+		t.Errorf("got %d loops, want none — nothing closes", len(loops))
+	}
+	if open != 1 {
+		t.Errorf("open = %d, want 1 for a single open path", open)
+	}
+}
+
 func loopLens(loops []Polygon) []int {
 	out := make([]int, len(loops))
 	for i, l := range loops {

@@ -67,11 +67,13 @@ func boundaryEdges(polys []Polygon, p Plane, w *geom.Welder, eps float64) [][2]i
 // that could not be closed, which is how non-manifold input is detected: a mesh
 // with a hole produces a cross-section boundary that does not close.
 //
-// ponytail: a vertex where four or more boundary edges meet — a pinch point
-// where the cross-section touches itself — is resolved by taking whichever
-// unused edge comes first, which may pair the loops differently than a human
-// would. Upgrade path if that shows up in practice: order the edges at such a
-// vertex by angle in the cut plane and pair them by turn direction.
+// A vertex where four or more boundary edges meet is a pinch point, where the
+// cross-section touches itself. That is two rings meeting at a point, and the
+// walk splits it into two rings accordingly: when it reaches a vertex it has
+// already passed, the sub-path from that earlier visit is emitted as its own
+// ring and the walk continues from there. Without the split the walk would
+// return a single self-intersecting polygon and report success, and the
+// malformed ring would not surface until it had already corrupted a cap.
 func assembleLoops(edges [][2]int, w *geom.Welder) (loops []Polygon, open int) {
 	type link struct{ to, edge int }
 
@@ -81,13 +83,22 @@ func assembleLoops(edges [][2]int, w *geom.Welder) (loops []Polygon, open int) {
 		adj[e[1]] = append(adj[e[1]], link{to: e[0], edge: ei})
 	}
 
-	// Map iteration order is randomised, so walk vertices in index order to keep
-	// the output stable between runs.
-	starts := make([]int, 0, len(adj))
-	for v := range adj {
-		starts = append(starts, v)
+	// Map iteration order is randomised, so walk vertices in a fixed order to keep
+	// the output stable between runs. Odd-degree vertices go first: those are the
+	// true endpoints of an open chain, and starting there walks such a chain once
+	// end to end rather than twice outward from some interior vertex, which would
+	// report one hole as two.
+	var odd, even []int
+	for v, ls := range adj {
+		if len(ls)%2 == 1 {
+			odd = append(odd, v)
+		} else {
+			even = append(even, v)
+		}
 	}
-	sort.Ints(starts)
+	sort.Ints(odd)
+	sort.Ints(even)
+	starts := append(odd, even...)
 
 	used := make([]bool, len(edges))
 	pts := w.Points()
@@ -101,30 +112,59 @@ func assembleLoops(edges [][2]int, w *geom.Welder) (loops []Polygon, open int) {
 		return link{}, false
 	}
 
+	toPolygon := func(ids []int) Polygon {
+		poly := make(Polygon, len(ids))
+		for i, id := range ids {
+			poly[i] = pts[id]
+		}
+		return poly
+	}
+
+	emit := func(ids []int) {
+		if len(ids) >= 3 {
+			loops = append(loops, toPolygon(ids))
+		} else {
+			// Fewer than three distinct vertices cannot bound any area.
+			open++
+		}
+	}
+
 	for _, start := range starts {
 		for {
 			if _, ok := nextUnused(start); !ok {
 				break
 			}
-			loop := Polygon{pts[start]}
-			cur, closed := start, false
+
+			path := []int{start}
+			posOf := map[int]int{start: 0}
+			cur := start
+
 			for {
 				step, ok := nextUnused(cur)
 				if !ok {
+					// Dead end: what remains of path is an unclosed chain.
+					open++
 					break
 				}
 				used[step.edge] = true
 				cur = step.to
+
 				if cur == start {
-					closed = true
+					emit(path)
 					break
 				}
-				loop = append(loop, pts[cur])
-			}
-			if closed && len(loop) >= 3 {
-				loops = append(loops, loop)
-			} else {
-				open++
+				if at, seen := posOf[cur]; seen {
+					// Pinch point. Emit the ring that closes here, then carry on
+					// from this vertex with the rest of the path intact.
+					emit(path[at:])
+					for _, v := range path[at+1:] {
+						delete(posOf, v)
+					}
+					path = path[:at+1]
+					continue
+				}
+				posOf[cur] = len(path)
+				path = append(path, cur)
 			}
 		}
 	}
