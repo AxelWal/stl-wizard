@@ -122,3 +122,41 @@ func TestCutFaceReportsNothingWhenThePlaneMissesThePart(t *testing.T) {
 		t.Error("expected no face for a plane nowhere near the part")
 	}
 }
+
+// A model face flush with the cut plane must not confuse the recovery. Cutting
+// the U at y=10 puts the notch floor exactly in the cut plane, bridging the two
+// legs; its edges have to cancel against the legs' own cap edges, leaving the two
+// genuine cross-sections rather than one merged region.
+//
+// This is what lets pins be a post-pass at all, and the cutter warns about this
+// placement precisely because it is delicate — so it is worth pinning down.
+func TestCutFaceHandlesAModelFaceFlushWithThePlane(t *testing.T) {
+	m := fixtures.UShape(10)
+	s := SpecFromNormal(geom.Vec3{15, 10, 5}, geom.Vec3{0, 1, 0}, 100, 100)
+	res, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+
+	_, groups, _, _, _, ok := cutFace(res.Part2, s.Planes()[0], m.Epsilon())
+	if !ok {
+		t.Fatal("no cut face recovered")
+	}
+	if len(groups) != 2 {
+		t.Fatalf("got %d face regions, want 2 — one per arm", len(groups))
+	}
+	for i, g := range groups {
+		if len(g.Holes) != 0 {
+			t.Errorf("region %d has %d holes, want 0", i, len(g.Holes))
+		}
+		// Each arm is 10 wide and 10 deep.
+		if got := math.Abs(signedArea2(g.Outer)) / 2; math.Abs(got-100) > 1e-6 {
+			t.Errorf("region %d area = %v, want 100", i, got)
+		}
+		// groupLoops normalises an outer boundary counter-clockwise; downstream
+		// pin placement relies on that sign, and nothing else in this file checks it.
+		if signedArea2(g.Outer) <= 0 {
+			t.Errorf("region %d outer is not counter-clockwise", i)
+		}
+	}
+}
