@@ -1,0 +1,10 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "stl-cutter",
+  "outputfilename": "stl-cutter",
+  "wailsjsdir": "./frontend",
+  "author": {
+    "name": "Axel Walsleben",
+    "email": "awalsleben@cliplister.com"
+  }
+}

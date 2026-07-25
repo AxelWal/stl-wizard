@@ -1,0 +1,6 @@
+# Wails bin directory
+build/bin
+
+# IDEs
+.idea
+.vscode
