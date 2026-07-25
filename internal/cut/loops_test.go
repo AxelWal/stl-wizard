@@ -221,3 +221,72 @@ func loopLens(loops []Polygon) []int {
 	}
 	return out
 }
+
+// assertLoopsAreStructurallySound checks the properties a cap triangulator needs
+// from every ring: at least three distinct vertices, every consecutive pair
+// including the wrap-around is a real input edge, and no input edge is consumed
+// twice across the whole set.
+func assertLoopsAreStructurallySound(t *testing.T, w *geom.Welder, edges [][2]int, loops []Polygon) {
+	t.Helper()
+
+	key := func(a, b int) [2]int {
+		if a > b {
+			a, b = b, a
+		}
+		return [2]int{a, b}
+	}
+	available := map[[2]int]int{}
+	for _, e := range edges {
+		available[key(e[0], e[1])]++
+	}
+
+	for i, l := range loops {
+		if len(l) < 3 {
+			t.Errorf("loop %d has %d vertices, want at least 3", i, len(l))
+			continue
+		}
+		seen := map[geom.Vec3]bool{}
+		for _, v := range l {
+			if seen[v] {
+				t.Errorf("loop %d revisits %v — the ring self-intersects", i, v)
+			}
+			seen[v] = true
+		}
+		for j := range l {
+			a, b := w.ID(l[j]), w.ID(l[(j+1)%len(l)])
+			k := key(a, b)
+			if available[k] == 0 {
+				t.Errorf("loop %d uses edge %v, which is not an unconsumed input edge", i, k)
+				continue
+			}
+			available[k]--
+		}
+	}
+}
+
+// A hub vertex carrying a leaf and two rings makes the walk split at the same
+// vertex more than once, which is the only path that exercises deleting the stale
+// posOf entries on truncation. Every other test in this file stays green with that
+// deletion removed, while this graph changes its open count and larger ones panic.
+func TestAssembleLoopsHandlesRepeatedPinchesAtOneVertex(t *testing.T) {
+	w := geom.NewWelder(1e-9)
+	p := make([]int, 6)
+	for i := range p {
+		p[i] = w.ID(geom.Vec3{float64(i), 0, 0})
+	}
+	edges := [][2]int{
+		{p[5], p[0]},                             // leaf
+		{p[0], p[1]}, {p[1], p[2]}, {p[2], p[0]}, // ring through the hub
+		{p[0], p[3]}, {p[3], p[1]},
+		{p[1], p[4]}, {p[4], p[0]}, // second ring through the hub
+	}
+
+	loops, open := assembleLoops(edges, w)
+	assertLoopsAreStructurallySound(t, w, edges, loops)
+	if len(loops) != 2 {
+		t.Errorf("got %d loops with lengths %v, want 2", len(loops), loopLens(loops))
+	}
+	if open != 1 {
+		t.Errorf("open = %d, want 1 for the single leaf edge", open)
+	}
+}

@@ -63,17 +63,25 @@ func boundaryEdges(polys []Polygon, p Plane, w *geom.Welder, eps float64) [][2]i
 	return edges
 }
 
-// assembleLoops chains undirected edges into closed loops. open counts chains
-// that could not be closed, which is how non-manifold input is detected: a mesh
-// with a hole produces a cross-section boundary that does not close.
+// assembleLoops chains undirected edges into closed loops.
+//
+// open counts chains that could not be closed, which is how non-manifold input is
+// detected. It is a defect count, not a hole count — a caller must not report it
+// as "N holes". The two coincide for disjoint simple chains, but a tangled
+// boundary can raise it more than once for a single region.
 //
 // A vertex where four or more boundary edges meet is a pinch point, where the
-// cross-section touches itself. That is two rings meeting at a point, and the
-// walk splits it into two rings accordingly: when it reaches a vertex it has
-// already passed, the sub-path from that earlier visit is emitted as its own
-// ring and the walk continues from there. Without the split the walk would
-// return a single self-intersecting polygon and report success, and the
-// malformed ring would not surface until it had already corrupted a cap.
+// cross-section touches itself. That is two rings meeting at a point, and the walk
+// splits it accordingly: on reaching a vertex it has already passed, the sub-path
+// from that earlier visit is emitted as its own ring and the walk carries on from
+// there. Without the split the walk would return a single self-intersecting
+// polygon and report success, and the malformed ring would not surface until it
+// had already corrupted a cap.
+//
+// The split also rescues a ring that a whisker attached at one vertex would
+// otherwise have consumed. A chain that enters a ring at one vertex and leaves at
+// another can still swallow it; such input is non-manifold and open is always
+// non-zero when it happens, so the defect is reported even though the ring is lost.
 func assembleLoops(edges [][2]int, w *geom.Welder) (loops []Polygon, open int) {
 	type link struct{ to, edge int }
 
@@ -98,7 +106,7 @@ func assembleLoops(edges [][2]int, w *geom.Welder) (loops []Polygon, open int) {
 	}
 	sort.Ints(odd)
 	sort.Ints(even)
-	starts := append(odd, even...)
+	starts := append(append([]int(nil), odd...), even...)
 
 	used := make([]bool, len(edges))
 	pts := w.Points()
