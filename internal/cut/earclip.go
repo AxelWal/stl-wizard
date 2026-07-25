@@ -36,6 +36,13 @@ func rightmostIdx(l faceLoop) int {
 // without the join crossing any edge of poly. Candidates at or right of m are
 // preferred and the nearest is taken, because bridging proceeds rightward.
 //
+// The join is tested against two boundaries: the accumulated loop poly, and hole,
+// the loop about to be spliced in. Testing hole is not redundant. m is hole's
+// rightmost vertex, so while the landing lies to its right the hole cannot be in
+// the way — but when the rightward search finds nothing and the fallback picks a
+// landing to the left, the join can cut straight back through the hole it is
+// supposed to be entering, and the merged loop self-crosses.
+//
 // avoid counts how often each position already appears in poly. A position that
 // appears twice already carries a bridge channel, and a second channel through
 // it would pinch the merged loop at that point — the loop stops being simple,
@@ -47,7 +54,7 @@ func rightmostIdx(l faceLoop) int {
 // ponytail: O(n^2) per hole. Caps have tens to low hundreds of boundary
 // vertices, so this is immaterial. Upgrade path if a cap ever gets large: the
 // Eberly ray-cast construction, which finds a visible vertex in one pass.
-func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int) int {
+func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int, hole faceLoop) int {
 	duplicated := func(i int) bool { return avoid[poly[i].P2] >= 2 }
 
 	clear := func(i int) bool {
@@ -58,6 +65,15 @@ func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int) int {
 				continue // edges incident to the candidate always touch it
 			}
 			if segmentsProperlyCross(m, v, poly[k].P2, poly[k2].P2) {
+				return false
+			}
+		}
+		for k := range hole {
+			k2 := (k + 1) % len(hole)
+			if hole[k].P2 == m || hole[k2].P2 == m {
+				continue // edges meeting the bridge's own start point
+			}
+			if segmentsProperlyCross(m, v, hole[k].P2, hole[k2].P2) {
 				return false
 			}
 		}
@@ -126,7 +142,7 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 
 		hi := rightmostIdx(h)
 		entry := h[hi]
-		pi := visibleVertex(result, entry.P2, counts)
+		pi := visibleVertex(result, entry.P2, counts, h)
 
 		spliced := make(faceLoop, 0, len(result)+len(h)+2)
 		spliced = append(spliced, result[:pi+1]...)

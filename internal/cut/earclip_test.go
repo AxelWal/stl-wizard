@@ -89,7 +89,7 @@ func TestRightmostIdx(t *testing.T) {
 
 func TestVisibleVertexPicksAReachableVertexToTheRight(t *testing.T) {
 	outer := projectZ(square(0, 0, 5))
-	i := visibleVertex(outer, pt2{0, 0}, nil)
+	i := visibleVertex(outer, pt2{0, 0}, nil, nil)
 	if outer[i].P2.X < 0 {
 		t.Fatalf("chose vertex %v, want one at or right of the probe", outer[i].P2)
 	}
@@ -289,6 +289,27 @@ func TestBridgeHolesDoesNotStackChannelsOnOneVertex(t *testing.T) {
 			assertTriangulationSound(t, merged, tris, tc.wantArea)
 		})
 	}
+}
+
+// Two holes crowded against the outer's left edge. Nothing at or right of the
+// lower hole's rightmost vertex is reachable once the upper hole's channel is in
+// place, so its bridge falls back to a landing on the left — and that join runs
+// back through the lower hole's own boundary, leaving a merged loop that crosses
+// itself and cannot be triangulated. Found by fuzzing; fails before visibleVertex
+// was shown the hole it is splicing in.
+func TestBridgeHolesDoesNotCutThroughTheHoleItIsSplicing(t *testing.T) {
+	outer := projectZ(square(0, 0, 10)) // 20x20, area 400
+	holes := []faceLoop{
+		reverseLoop(projectZ(square(-8, 3, 1))), // 2x2, area 4
+		reverseLoop(projectZ(square(-7, 0, 1))), // 2x2, area 4
+	}
+	merged := bridgeHoles(outer, holes)
+
+	tris, ok := earClip(merged)
+	if !ok {
+		t.Fatalf("ok = false, want a complete triangulation")
+	}
+	assertTriangulationSound(t, merged, tris, 392)
 }
 
 // A hole touching the outer boundary at a vertex is legitimate input — groupLoops
