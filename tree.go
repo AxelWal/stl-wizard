@@ -10,14 +10,14 @@ import (
 // been split is just a grouping, and holding its mesh would multiply memory for
 // nothing. Undo restores it from the history instead.
 type Part struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Tris     int     `json:"tris"`
-	Volume   float64 `json:"volume"` // mm³
-	Min      [3]float64 `json:"min"`
-	Size     [3]float64 `json:"size"`
-	Watertight bool  `json:"watertight"`
-	Children []*Part `json:"children"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Tris       int        `json:"tris"`
+	Volume     float64    `json:"volume"` // mm³
+	Min        [3]float64 `json:"min"`
+	Size       [3]float64 `json:"size"`
+	Watertight bool       `json:"watertight"`
+	Children   []*Part    `json:"children"`
 
 	// Mesh is nil for a part that has been split. Not serialised — the frontend
 	// fetches geometry from /part/{id}.stl instead.
@@ -33,9 +33,9 @@ type undoStep struct {
 }
 
 type Tree struct {
-	ModelName  string  `json:"modelName"`
-	Root       *Part   `json:"root"`
-	SelectedID string  `json:"selectedId"`
+	ModelName  string `json:"modelName"`
+	Root       *Part  `json:"root"`
+	SelectedID string `json:"selectedId"`
 
 	history []undoStep
 	nextID  int

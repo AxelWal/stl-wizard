@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 
 	"stl-cutter/internal/fixtures"
@@ -89,6 +90,9 @@ func TestSplitRefusesAnUnknownID(t *testing.T) {
 func TestUndoRestoresTheParentAndItsMesh(t *testing.T) {
 	tr := NewTree("cube.stl", fixtures.Cube(10))
 	rootID := tr.Root.ID
+	wantTris := len(tr.Root.Mesh.Tris)
+	wantVolume := tr.Root.Mesh.Volume()
+
 	if _, _, err := tr.Split(rootID, fixtures.Cube(5), fixtures.Cube(4), true, true); err != nil {
 		t.Fatalf("Split: %v", err)
 	}
@@ -100,7 +104,15 @@ func TestUndoRestoresTheParentAndItsMesh(t *testing.T) {
 		t.Error("after undo the root should be a leaf again")
 	}
 	if tr.Root.Mesh == nil {
-		t.Error("undo must restore the parent's mesh")
+		t.Fatal("undo must restore the parent's mesh")
+	}
+	// Not just "some mesh" — the original one. A mutant restoring an empty mesh
+	// would satisfy a nil check while losing the geometry undo exists to bring back.
+	if got := len(tr.Root.Mesh.Tris); got != wantTris {
+		t.Errorf("restored mesh has %d triangles, want the original %d", got, wantTris)
+	}
+	if got := tr.Root.Mesh.Volume(); math.Abs(got-wantVolume) > 1e-9 {
+		t.Errorf("restored mesh volume = %v, want the original %v", got, wantVolume)
 	}
 	if tr.SelectedID != rootID {
 		t.Errorf("SelectedID = %q, want the restored parent %q", tr.SelectedID, rootID)
