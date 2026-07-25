@@ -55,8 +55,9 @@ type AutoSplitStep struct {
 // step through the same Split path a manual cut uses, which means the part tree,
 // the undo history and the watertightness reporting all behave identically.
 //
-// Each step halves the longest overflowing axis with a rectangle spanning the
-// whole cross-section, so the bounded plane behaves as an unbounded one.
+// Each step halves the longest overflowing axis with a rectangle bounded to
+// that box's own cross-section, so it cannot also strike an unrelated sibling
+// piece that happens to share the same footprint on the other two axes.
 func PlanAutoSplit(m *stl.Mesh, bed Bed) ([]AutoSplitStep, error) {
 	if err := bed.valid(); err != nil {
 		return nil, err
