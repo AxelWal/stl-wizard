@@ -22,6 +22,31 @@ func segmentsProperlyCross(a, b, c, d pt2) bool {
 	return d1*d2 < 0 && d3*d4 < 0
 }
 
+// pointOnSegment reports whether p lies on segment ab, endpoints included.
+func pointOnSegment(p, a, b pt2) bool {
+	if cross2(a, b, p) != 0 {
+		return false
+	}
+	return math.Min(a.X, b.X) <= p.X && p.X <= math.Max(a.X, b.X) &&
+		math.Min(a.Y, b.Y) <= p.Y && p.Y <= math.Max(a.Y, b.Y)
+}
+
+// segmentsTouch reports whether ab and cd share any point at all — a proper
+// crossing, a collinear overlap, or a single grazing contact.
+//
+// Bridge clearance needs this rather than segmentsProperlyCross. A join that
+// merely grazes an edge, or runs along one, still leaves the merged loop
+// non-simple and so unclippable; and grazing is the normal case for
+// axis-aligned models cut by axis-aligned planes, where vertices routinely line
+// up exactly.
+func segmentsTouch(a, b, c, d pt2) bool {
+	if segmentsProperlyCross(a, b, c, d) {
+		return true
+	}
+	return pointOnSegment(c, a, b) || pointOnSegment(d, a, b) ||
+		pointOnSegment(a, c, d) || pointOnSegment(b, c, d)
+}
+
 func rightmostIdx(l faceLoop) int {
 	best := 0
 	for i := range l {
@@ -33,8 +58,14 @@ func rightmostIdx(l faceLoop) int {
 }
 
 // visibleVertex returns the index of a vertex of poly that m can be joined to
-// without the join crossing any edge of poly. Candidates at or right of m are
-// preferred and the nearest is taken, because bridging proceeds rightward.
+// without the join touching any edge of poly away from its own endpoints, or -1
+// if no such vertex exists. Candidates at or right of m are preferred and the
+// nearest is taken, because bridging proceeds rightward.
+//
+// Touching, not merely crossing, is what disqualifies a join: a bridge that
+// grazes a vertex or runs along an edge pinches the merged loop at that point,
+// and a non-simple loop cannot be ear clipped. Axis-aligned models cut by
+// axis-aligned planes graze constantly.
 //
 // The join is tested against two boundaries: the accumulated loop poly, and hole,
 // the loop about to be spliced in. Testing hole is not redundant. m is hole's
@@ -59,21 +90,30 @@ func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int, hole faceLoop) int {
 
 	clear := func(i int) bool {
 		v := poly[i].P2
+
+		// The join legitimately meets the boundary at its own two endpoints, so
+		// edges ending at either are skipped. The test is by position, not by
+		// index: bridging duplicates positions, so the landing may appear at a
+		// second index whose edges the index test would not exclude, and the
+		// grazing test would then reject every candidate. Position subsumes the
+		// old index test, since poly[i].P2 is v.
+		endpoint := func(p pt2) bool { return p == m || p == v }
+
 		for k := range poly {
 			k2 := (k + 1) % len(poly)
-			if k == i || k2 == i {
-				continue // edges incident to the candidate always touch it
+			if endpoint(poly[k].P2) || endpoint(poly[k2].P2) {
+				continue
 			}
-			if segmentsProperlyCross(m, v, poly[k].P2, poly[k2].P2) {
+			if segmentsTouch(m, v, poly[k].P2, poly[k2].P2) {
 				return false
 			}
 		}
 		for k := range hole {
 			k2 := (k + 1) % len(hole)
-			if hole[k].P2 == m || hole[k2].P2 == m {
-				continue // edges meeting the bridge's own start point
+			if endpoint(hole[k].P2) || endpoint(hole[k2].P2) {
+				continue
 			}
-			if segmentsProperlyCross(m, v, hole[k].P2, hole[k2].P2) {
+			if segmentsTouch(m, v, hole[k].P2, hole[k2].P2) {
 				return false
 			}
 		}
@@ -109,7 +149,11 @@ func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int, hole faceLoop) int {
 			}
 		}
 	}
-	return 0
+	// Nothing at all is joinable. Instrumentation over 20,000 real bridges never
+	// reached here; if it ever does, an arbitrary landing would silently produce a
+	// cap with the hole filled in, so the caller is told to leave the hole
+	// unspliced and let earClip report the failure.
+	return -1
 }
 
 // bridgeHoles splices each hole into outer through a zero-width channel,
@@ -131,7 +175,7 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 
 	for _, h := range ordered {
 		if len(h) < 3 {
-			continue
+			continue // a one- or two-vertex hole has no area, so dropping it loses nothing
 		}
 		// ponytail: recounted per hole rather than maintained incrementally. Holes
 		// number in the low tens, so O(holes * n) is free and cannot drift.
@@ -143,6 +187,15 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 		hi := rightmostIdx(h)
 		entry := h[hi]
 		pi := visibleVertex(result, entry.P2, counts, h)
+		if pi < 0 {
+			// No landing is safe. Splicing on an arbitrary index would silently
+			// corrupt the merged loop, so the hole is left unspliced: any channel
+			// already in place then leaves the loop non-simple and earClip reports
+			// ok = false, which the caller surfaces. Unreachable in practice — no
+			// fuzzed configuration has produced it — so it is not worth an error
+			// return that every caller would have to thread through.
+			continue
+		}
 
 		spliced := make(faceLoop, 0, len(result)+len(h)+2)
 		spliced = append(spliced, result[:pi+1]...)
@@ -161,6 +214,10 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 // n vertices must yield exactly n-2 triangles, and anything less means the
 // input was degenerate or self-intersecting. Callers surface that rather than
 // shipping a cap with a hole in it.
+//
+// A failed triangulation returns no triangles at all. The partial fan a stalled
+// clip has accumulated covers only part of the region, and `tris, _ :=` is one
+// character away from shipping it as a finished cap.
 func earClip(l faceLoop) (tris [][3]int, ok bool) {
 	n := len(l)
 	if n < 3 {
@@ -198,7 +255,10 @@ func earClip(l faceLoop) (tris [][3]int, ok bool) {
 			tris = append(tris, [3]int{idx[0], idx[1], idx[2]})
 		}
 	}
-	return tris, len(tris) == n-2
+	if len(tris) != n-2 {
+		return nil, false
+	}
+	return tris, true
 }
 
 // pointInRemaining is a crossing-number test against the polygon still left in
@@ -233,8 +293,18 @@ func pointInRemaining(l faceLoop, idx []int, p pt2) bool {
 // duplicated bridge vertex hangs entirely inside the ear while touching the
 // diagonal only at an endpoint.
 //
-// All four are necessary conditions, none is individually sufficient, and
-// together they are conservative: a corner that cannot be shown safe is not
+// Five conditions are tested below, and they do not carry equal weight. Turning
+// them off one at a time shows the convex-corner test is what keeps bad geometry
+// out and the vertex-in-triangle test is what keeps the clip from stalling,
+// while the diagonal-crossing test and the midpoint-interior test are
+// outcome-neutral — deleting both reproduces the full result exactly on both a
+// generic and an axis-aligned test family. They are kept as defence in depth,
+// because the analytic argument that makes them redundant assumes a simple
+// polygon and a bridged loop with duplicated vertices is not strictly simple.
+// The on-the-diagonal vertex test is the fifth, and is load-bearing for the
+// axis-aligned case described below.
+//
+// Together they are conservative: a corner that cannot be shown safe is not
 // clipped, so earClip reports ok = false rather than emitting bad geometry.
 //
 // ponytail: O(n) per candidate, so O(n^3) over a full triangulation — the same

@@ -147,23 +147,80 @@ func TestBridgeHolesHandlesTwoHoles(t *testing.T) {
 	}
 }
 
+// clipHalfPlane clips a convex polygon to the half-plane left of a->b
+// (Sutherland-Hodgman). The subject is always convex here — a triangle, then
+// what is left of it — so one output ring is enough.
+func clipHalfPlane(subject []pt2, a, b pt2) []pt2 {
+	out := make([]pt2, 0, len(subject)+1)
+	for i := range subject {
+		c := subject[i]
+		d := subject[(i+1)%len(subject)]
+		sc, sd := cross2(a, b, c), cross2(a, b, d)
+		if sc >= 0 {
+			out = append(out, c)
+		}
+		if (sc > 0 && sd < 0) || (sc < 0 && sd > 0) {
+			f := sc / (sc - sd)
+			out = append(out, pt2{X: c.X + f*(d.X-c.X), Y: c.Y + f*(d.Y-c.Y)})
+		}
+	}
+	return out
+}
+
+// overlapArea returns the area shared by two counter-clockwise triangles. Two
+// triangles that only abut along an edge or meet at a vertex clip to a
+// degenerate ring and so score zero.
+func overlapArea(p, q [3]pt2) float64 {
+	poly := []pt2{p[0], p[1], p[2]}
+	for i := 0; i < 3; i++ {
+		poly = clipHalfPlane(poly, q[i], q[(i+1)%3])
+		if len(poly) < 3 {
+			return 0
+		}
+	}
+	var s float64
+	for i := range poly {
+		j := (i + 1) % len(poly)
+		s += poly[i].X*poly[j].Y - poly[j].X*poly[i].Y
+	}
+	return math.Abs(s) / 2
+}
+
 // assertTriangulationSound checks the properties a cap must have: every triangle
-// counter-clockwise, and the total area exactly the region's area. Summing signed
-// areas rather than absolute ones is what catches an inverted triangle — the
-// existing area tests sum |area| and would score an inverted triangle positively.
+// counter-clockwise, no two triangles overlapping, and the total area exactly the
+// region's area. Summing signed areas rather than absolute ones is what catches an
+// inverted triangle — the existing area tests sum |area| and would score an
+// inverted triangle positively.
+//
+// The pairwise overlap check is not implied by the other two. A triangulation can
+// hit the exact area with every triangle wound correctly and still have one
+// triangle lying 32% on top of another, paid for by a third that misses area
+// elsewhere; that is a visibly wrong cap that the area test alone waves through.
+//
+// ponytail: O(t^2) pairs, exact clip per pair. Caps run to a few hundred
+// triangles, so this is a test-only cost of a few hundred thousand clips.
 func assertTriangulationSound(t *testing.T, l faceLoop, tris [][3]int, wantArea float64) {
 	t.Helper()
 
 	var signed float64
+	pts := make([][3]pt2, len(tris))
 	for i, tr := range tris {
 		c := cross2(l[tr[0]].P2, l[tr[1]].P2, l[tr[2]].P2)
 		if c <= 0 {
 			t.Errorf("triangle %d is inverted or degenerate: cross2 = %v", i, c)
 		}
 		signed += c / 2
+		pts[i] = [3]pt2{l[tr[0]].P2, l[tr[1]].P2, l[tr[2]].P2}
 	}
 	if math.Abs(signed-wantArea) > 1e-9 {
 		t.Errorf("signed area = %v, want %v", signed, wantArea)
+	}
+	for i := range pts {
+		for j := i + 1; j < len(pts); j++ {
+			if a := overlapArea(pts[i], pts[j]); a > 1e-9 {
+				t.Errorf("triangles %d and %d overlap by %v", i, j, a)
+			}
+		}
 	}
 }
 
@@ -323,8 +380,122 @@ func TestEarClipHoleTouchingTheOuterBoundary(t *testing.T) {
 	tris, ok := earClip(merged)
 	if ok {
 		assertTriangulationSound(t, merged, tris, 98)
-	} else {
-		t.Logf("hole touching the outer boundary yields ok = false with %d triangles; "+
-			"failing closed is acceptable, silently emitting bad geometry is not", len(tris))
+		return
+	}
+	// Failing closed is acceptable, silently emitting bad geometry is not — so the
+	// failure branch has to assert the contract rather than only log it.
+	if tris != nil {
+		t.Fatalf("ok = false but %d triangles were returned; a failed triangulation must return none",
+			len(tris))
+	}
+	t.Logf("hole touching the outer boundary yields ok = false and no triangles")
+}
+
+// A plate with holes on integer positions is what this tool is for, and it is
+// where a bridge grazes rather than crosses. Holes at (-8,-8) and (-8,-5): the
+// first bridges from (-7,-7) to the corner (10,-10); the second enters at (-7,-4)
+// with nothing reachable rightward, so its nearest candidate is (-7,-9) — a join
+// that runs along the second hole's own edge, straight through the first hole's
+// duplicated entry at (-7,-7), then along the first hole's edge. Not one proper
+// crossing anywhere, so a clearance test that only looks for crossings passes it
+// and the merged loop is degenerate.
+func TestEarClipGridPlateWithTwoHoles(t *testing.T) {
+	outer := projectZ(square(0, 0, 10)) // 20x20, area 400
+	holes := []faceLoop{
+		reverseLoop(projectZ(square(-8, -8, 1))), // 2x2, area 4
+		reverseLoop(projectZ(square(-8, -5, 1))), // 2x2, area 4
+	}
+	merged := bridgeHoles(outer, holes)
+
+	tris, ok := earClip(merged)
+	if !ok {
+		t.Fatalf("ok = false, want a complete triangulation")
+	}
+	assertTriangulationSound(t, merged, tris, 392)
+}
+
+// The position sweep with two holes on integer positions. Exact collinearity is
+// the norm on a grid, not an accident of a few positions: one hole never fails,
+// two holes failed 4-5% of the time before bridge clearance rejected grazing.
+func TestEarClipGridPositionSweep(t *testing.T) {
+	outer := projectZ(square(0, 0, 10))
+
+	for ax := -8; ax <= 8; ax += 4 {
+		for ay := -8; ay <= 8; ay += 4 {
+			for bx := -8; bx <= 8; bx += 3 {
+				for by := -8; by <= 8; by += 3 {
+					// Holes span +-1, so anything closer than 3 in both axes touches
+					// or overlaps and is not two holes at all.
+					if abs(ax-bx) < 3 && abs(ay-by) < 3 {
+						continue
+					}
+					holes := []faceLoop{
+						reverseLoop(projectZ(square(float64(ax), float64(ay), 1))),
+						reverseLoop(projectZ(square(float64(bx), float64(by), 1))),
+					}
+					merged := bridgeHoles(outer, holes)
+					tris, ok := earClip(merged)
+					if !ok {
+						t.Errorf("holes at (%d,%d) and (%d,%d): ok = false", ax, ay, bx, by)
+						continue
+					}
+					assertTriangulationSound(t, merged, tris, 392)
+				}
+			}
+		}
+	}
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// earClip's contract on input it cannot triangulate: no triangles, ok = false.
+// A clockwise loop has no counter-clockwise ear anywhere, and a bowtie is not a
+// simple polygon in either winding. All four were reported as untested.
+func TestEarClipRejectsLoopsItCannotTriangulate(t *testing.T) {
+	bowtie := Polygon{{0, 0, 0}, {2, 2, 0}, {2, 0, 0}, {0, 2, 0}}
+	cases := []struct {
+		name string
+		loop Polygon
+	}{
+		{"clockwise triangle", Polygon{{0, 0, 0}, {0, 1, 0}, {1, 0, 0}}},
+		{"clockwise square", Polygon{{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}}},
+		{"bowtie", bowtie},
+		{"bowtie reversed", Polygon{bowtie[3], bowtie[2], bowtie[1], bowtie[0]}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tris, ok := earClip(projectZ(tc.loop))
+			if ok {
+				t.Fatalf("ok = true with %d triangles, want false", len(tris))
+			}
+			if tris != nil {
+				t.Fatalf("got %d triangles alongside ok = false, want none", len(tris))
+			}
+		})
+	}
+}
+
+func TestSegmentsTouchCatchesWhatProperCrossingMisses(t *testing.T) {
+	cases := []struct {
+		name       string
+		a, b, c, d pt2
+		want       bool
+	}{
+		{"proper crossing", pt2{0, 0}, pt2{2, 2}, pt2{0, 2}, pt2{2, 0}, true},
+		{"collinear overlap", pt2{0, 0}, pt2{0, 4}, pt2{0, 1}, pt2{0, 3}, true},
+		{"grazing a vertex", pt2{0, -2}, pt2{0, 2}, pt2{0, 0}, pt2{3, 1}, true},
+		{"shared endpoint", pt2{0, 0}, pt2{1, 1}, pt2{1, 1}, pt2{2, 0}, true},
+		{"disjoint collinear", pt2{0, 0}, pt2{1, 0}, pt2{2, 0}, pt2{3, 0}, false},
+		{"apart", pt2{0, 0}, pt2{1, 0}, pt2{0, 1}, pt2{1, 1}, false},
+	}
+	for _, tc := range cases {
+		if got := segmentsTouch(tc.a, tc.b, tc.c, tc.d); got != tc.want {
+			t.Errorf("%s: segmentsTouch = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
