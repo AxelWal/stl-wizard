@@ -110,8 +110,10 @@ func (s Spec) Validate() error {
 }
 
 // Planes returns the five inward-facing half-spaces whose intersection is the
-// cutter. Order is the cut plane first, then the four rectangle sides; nothing
-// depends on that order, because cap recovery happens after all splitting.
+// cutter. Order is the cut plane first, then the four rectangle sides, and it
+// matters: Split clips and caps one plane at a time, so each plane cuts the caps
+// the earlier ones left behind. Callers also rely on planes[0] being the cut
+// plane when reporting faces the cut lies flat against.
 func (s Spec) Planes() []Plane {
 	n := s.Normal.Unit()
 	u, v := s.Basis()

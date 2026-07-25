@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
 )
 
@@ -21,8 +22,17 @@ type Result struct {
 	// input mesh was not manifold. It is a defect count, never a hole count: a
 	// single tangled boundary can raise it more than once.
 	OpenLoops int
-	// Incomplete counts regions that could not be fully triangulated.
-	Incomplete int
+	// CapIncomplete counts cut faces whose cap could not be fully triangulated,
+	// leaving a hole in the cut surface shared by both parts. Kept apart from
+	// LeftoverIncomplete so a caller can tell which part is holed.
+	CapIncomplete int
+	// LeftoverIncomplete counts original triangles whose portion outside the
+	// cutter could not be fully triangulated. Only part 1 is affected.
+	LeftoverIncomplete int
+
+	// Part1Check and Part2Check are meshcheck's verdict on the finished parts.
+	// The zero value is a clean report, so an unset field means "verified good".
+	Part1Check, Part2Check meshcheck.Report
 
 	Warnings []string
 }
@@ -30,7 +40,10 @@ type Result struct {
 // Watertight reports whether both parts closed cleanly. When false the parts are
 // still returned, flagged, so the caller can decide — silently shipping a part
 // with a hole in it would produce a model that looks right and fails to print.
-func (r *Result) Watertight() bool { return r.OpenLoops == 0 && r.Incomplete == 0 }
+func (r *Result) Watertight() bool {
+	return r.OpenLoops == 0 && r.CapIncomplete == 0 && r.LeftoverIncomplete == 0 &&
+		r.Part1Check.OK() && r.Part2Check.OK()
+}
 
 type triClass int
 
@@ -119,20 +132,10 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 	for _, p := range planes {
 		var insidePolys []Polygon
 		var next []taggedPoly
-		// A cap closes the hole that removing material leaves. A plane that
-		// removes nothing — one merely tangent to a face of the model, which is
-		// what a cutter bound flush against a model wall gives — leaves no hole,
-		// and capping it anyway would chain the on-plane edges of the surrounding
-		// faces into a loop and lay a second, oppositely wound copy of a wall the
-		// model already has. That shows up as misoriented edges, not open ones.
-		removed := false
 
 		for _, cp := range current {
-			in, out := splitPolygon(cp.poly, p, eps)
-			if out != nil {
-				// Discarded here. part 1 is built separately, below.
-				removed = true
-			}
+			// out is discarded here; part 1 is built separately, below.
+			in, _ := splitPolygon(cp.poly, p, eps)
 			if in != nil {
 				next = append(next, taggedPoly{poly: in, isCap: cp.isCap})
 				insidePolys = append(insidePolys, in)
@@ -143,16 +146,21 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 			return nil, errors.New("the cutting plane and rectangle enclose no part of the model — nothing to cut")
 		}
 
-		if removed {
-			tris, open, incomplete := triangulateFace(insidePolys, p, eps)
-			res.OpenLoops += open
-			res.Incomplete += incomplete
-			for _, t := range tris {
-				// t faces +p.N, which points into the region being kept, so the
-				// kept side takes the reverse.
-				r := t.Reversed()
-				next = append(next, taggedPoly{poly: Polygon{r.A, r.B, r.C}, isCap: true})
-			}
+		// Every plane is capped, with no test for whether it removed anything. A
+		// plane flush against a model face needs no cap, and gets none: its
+		// on-plane edges cancel against the coplanar face's own in boundaryEdges,
+		// leaving no loop to cap. Guarding on "this plane removed something" was
+		// a global test over the whole mesh, so a plane that cut in one place and
+		// lay flush in another passed it and got a spurious cap laid over the
+		// flush face.
+		tris, open, incomplete := triangulateFace(insidePolys, p, eps)
+		res.OpenLoops += open
+		res.CapIncomplete += incomplete
+		for _, t := range tris {
+			// t faces +p.N, which points into the region being kept, so the
+			// kept side takes the reverse.
+			r := t.Reversed()
+			next = append(next, taggedPoly{poly: Polygon{r.A, r.B, r.C}, isCap: true})
 		}
 		current = next
 	}
@@ -191,7 +199,7 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 		}
 		tris, ok := subtractFragment(t, frag, eps)
 		if !ok {
-			res.Incomplete++
+			res.LeftoverIncomplete++
 		}
 		part1.Tris = append(part1.Tris, tris...)
 	}
@@ -211,6 +219,17 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 		}
 	}
 
+	// A plane flush with a model face can leave a "part" that is a sheet of
+	// surface with no interior — the cube's top face cut at z = 10 gives two
+	// triangles and a nominal volume from the tetrahedra to the origin. Refuse it
+	// outright rather than hand back something that is not a solid at all. This
+	// comes before the watertightness check so the clearer message wins.
+	whole := m.Volume()
+	v1, v2 := part1.Volume(), part2.Volume()
+	if v1 <= 0 || v2 <= 0 || math.Abs(v1) <= math.Abs(whole)*1e-9 || math.Abs(v2) <= math.Abs(whole)*1e-9 {
+		return nil, errors.New("the cutting plane only grazes the model's surface and removes nothing — move it into the material")
+	}
+
 	res.Part1, res.Part2 = part1, part2
 
 	if res.OpenLoops > 0 {
@@ -218,10 +237,15 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 			"%d cut boundary %s could not be closed — the model is not watertight where it was cut, so the parts may have holes",
 			res.OpenLoops, plural(res.OpenLoops, "loop", "loops")))
 	}
-	if res.Incomplete > 0 {
+	if res.CapIncomplete > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"%d cut %s could not be fully triangulated",
-			res.Incomplete, plural(res.Incomplete, "face", "faces")))
+			"%d cut %s could not be fully triangulated, so both parts are holed where they meet",
+			res.CapIncomplete, plural(res.CapIncomplete, "face", "faces")))
+	}
+	if res.LeftoverIncomplete > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf(
+			"%d original %s could not be fully rebuilt around the cut, so the remaining part is holed",
+			res.LeftoverIncomplete, plural(res.LeftoverIncomplete, "triangle", "triangles")))
 	}
 	if coplanar > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf(
@@ -232,18 +256,33 @@ func Split(m *stl.Mesh, s Spec) (*Result, error) {
 	// Volume conservation is cheap to verify and catches whole classes of
 	// winding and capping bugs, so it is checked in production too, not only in
 	// tests.
-	if want, got := m.Volume(), part1.Volume()+part2.Volume(); math.Abs(got-want) > math.Max(1e-6, math.Abs(want)*1e-6) {
+	if got := v1 + v2; math.Abs(got-whole) > math.Max(1e-6, math.Abs(whole)*1e-6) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"the parts total %.4g in volume but the original was %.4g — the cut may be flawed", got, want))
+			"the parts total %.4g in volume but the original was %.4g — the cut may be flawed", got, whole))
+	}
+
+	// Verify what we are about to return. Every earlier signal is indirect —
+	// OpenLoops sees only loop assembly, CapIncomplete only ear clipping, and
+	// volume conservation is blind to a spurious cap because it cancels between
+	// the two parts. Checking the finished meshes is the one test that cannot be
+	// fooled by a defect it was not designed to anticipate.
+	if rep := meshcheck.Check(part1, eps); !rep.OK() {
+		res.Part1Check = rep
+		res.Warnings = append(res.Warnings, fmt.Sprintf("the remaining part is not a closed solid: %s", rep))
+	}
+	if rep := meshcheck.Check(part2, eps); !rep.OK() {
+		res.Part2Check = rep
+		res.Warnings = append(res.Warnings, fmt.Sprintf("the cut-off part is not a closed solid: %s", rep))
 	}
 
 	return res, nil
 }
 
-// fanPolygon triangulates a convex polygon from its first vertex, dropping only
-// the triangles a repeated vertex makes degenerate.
+// fanPolygon triangulates a convex polygon from its first vertex. It first drops
+// vertices that repeat their neighbour within eps, then drops any fan triangle a
+// surviving repeat still makes degenerate.
 //
-// Unlike fanTriangles it applies no minimum area. These are the finished
+// It applies no minimum area. These are the finished
 // fragments of the two parts, and their fans tile the surface exactly: culling
 // any one of them punches a hole. A sliver here is the honest shape of a cut
 // that grazed a vertex, and shipping it beats shipping a part that is not
@@ -269,7 +308,9 @@ func fanPolygon(poly Polygon, eps float64) []stl.Tri {
 func paramOnSegment(p, a, b geom.Vec3, eps float64) (float64, bool) {
 	ab := b.Sub(a)
 	l2 := ab.Dot(ab)
-	if l2 == 0 {
+	// A segment shorter than eps has no direction worth projecting onto, so treat
+	// it as the single point a.
+	if l2 <= eps*eps {
 		return 0, p.Sub(a).Len() <= eps
 	}
 	s := p.Sub(a).Dot(ab) / l2

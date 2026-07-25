@@ -2,7 +2,6 @@ package cut
 
 import (
 	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
 )
 
 // Polygon is a planar convex polygon. Splitting a convex polygon by a plane
@@ -83,21 +82,4 @@ func splitPolygon(poly Polygon, p Plane, eps float64) (in, out Polygon) {
 		out = nil
 	}
 	return in, out
-}
-
-// fanTriangles triangulates a convex polygon from its first vertex. Triangles
-// with an area at or below minArea are dropped, which removes the slivers that
-// clipping near a vertex produces.
-func fanTriangles(poly Polygon, minArea float64) []stl.Tri {
-	if len(poly) < 3 {
-		return nil
-	}
-	out := make([]stl.Tri, 0, len(poly)-2)
-	for i := 1; i+1 < len(poly); i++ {
-		t := stl.Tri{A: poly[0], B: poly[i], C: poly[i+1]}
-		if t.Area() > minArea {
-			out = append(out, t)
-		}
-	}
-	return out
 }

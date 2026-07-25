@@ -16,13 +16,34 @@ func TestBoundaryEdgesFindsTheEdgeLyingOnThePlane(t *testing.T) {
 	}
 }
 
-// A triangle lying wholly in the cut plane would otherwise contribute all three
-// of its edges and corrupt the loop graph.
-func TestBoundaryEdgesIgnoresCoplanarPolygons(t *testing.T) {
-	polys := []Polygon{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}}
+// A polygon lying wholly in the cut plane takes part in the tally like any
+// other, and cancels against its neighbours. Its boundary edges each appear
+// twice — once from it, once from the face across the edge — so nothing
+// survives, and the plane is correctly seen to need no cap. Skipping the
+// coplanar polygon instead would leave the four neighbours' edges uncancelled
+// and chain them into a spurious loop, laying a second copy of a wall the model
+// already has.
+func TestBoundaryEdgesCancelsACoplanarFaceAgainstItsNeighbours(t *testing.T) {
+	// A unit square on z=0 with the four side faces that share its edges.
+	quad := Polygon{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}
+	sides := []Polygon{
+		{{0, 0, 0}, {1, 0, 0}, {0.5, 0.5, 1}},
+		{{1, 0, 0}, {1, 1, 0}, {0.5, 0.5, 1}},
+		{{1, 1, 0}, {0, 1, 0}, {0.5, 0.5, 1}},
+		{{0, 1, 0}, {0, 0, 0}, {0.5, 0.5, 1}},
+	}
+
+	// Without the coplanar face this is a genuine cut: the four side faces each
+	// contribute their one on-plane edge and those chain into the cross-section.
 	w := geom.NewWelder(1e-9)
-	if edges := boundaryEdges(polys, zPlane, w, testEps); len(edges) != 0 {
-		t.Fatalf("got %d edges, want 0 for a coplanar polygon", len(edges))
+	if edges := boundaryEdges(sides, zPlane, w, testEps); len(edges) != 4 {
+		t.Fatalf("got %d edges for the straddling faces alone, want the 4 of the cut loop", len(edges))
+	}
+
+	// With it, the plane lies flush against real surface and bounds nothing.
+	w = geom.NewWelder(1e-9)
+	if edges := boundaryEdges(append(sides, quad), zPlane, w, testEps); len(edges) != 0 {
+		t.Fatalf("got %d edges, want 0 — a coplanar face cancels against its neighbours", len(edges))
 	}
 }
 

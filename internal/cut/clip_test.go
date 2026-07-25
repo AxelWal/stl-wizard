@@ -101,27 +101,3 @@ func TestSplitPolygonDiscardsSubTriangularFragments(t *testing.T) {
 		t.Fatalf("in = %v, want nil for a fragment with fewer than three vertices", in)
 	}
 }
-
-func TestFanTrianglesCoversPolygonArea(t *testing.T) {
-	// A unit square in the z=0 plane.
-	poly := Polygon{{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}}
-	tris := fanTriangles(poly, 0)
-	if len(tris) != 2 {
-		t.Fatalf("got %d triangles, want 2", len(tris))
-	}
-	var area float64
-	for _, tr := range tris {
-		area += tr.Area()
-	}
-	if math.Abs(area-1) > 1e-12 {
-		t.Fatalf("total area = %v, want 1", area)
-	}
-}
-
-func TestFanTrianglesDropsDegenerateSlivers(t *testing.T) {
-	// Three collinear points have no area.
-	poly := Polygon{{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}
-	if got := fanTriangles(poly, 1e-18); len(got) != 0 {
-		t.Fatalf("got %d triangles, want 0", len(got))
-	}
-}

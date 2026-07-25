@@ -17,22 +17,22 @@ func boundaryEdges(polys []Polygon, p Plane, w *geom.Welder, eps float64) [][2]i
 	// An edge shared by two polygons is interior to a coplanar region rather
 	// than part of the boundary, so occurrences are counted and only the odd
 	// ones survive.
+	//
+	// A polygon lying wholly in the plane takes part like any other. Skipping it
+	// would be a heuristic, and a wrong one: its interior edges appear twice
+	// among its own triangles and cancel, and each of its boundary edges appears
+	// once from it and once from the adjacent non-coplanar face, so they cancel
+	// too. What survives is exactly the genuine cut cross-section. Skipping the
+	// polygon instead leaves the neighbours' single occurrences uncancelled, and
+	// they chain into a spurious loop that lays a second copy of a wall the model
+	// already has.
 	counts := make(map[[2]int]int)
 	order := make([][2]int, 0, 16)
 
 	for _, poly := range polys {
 		onPlane := make([]bool, len(poly))
-		allOn := true
 		for i, v := range poly {
 			onPlane[i] = math.Abs(p.Dist(v)) <= eps
-			if !onPlane[i] {
-				allOn = false
-			}
-		}
-		// A polygon lying wholly in the plane has no boundary of its own; every
-		// one of its edges would otherwise be injected into the loop graph.
-		if allOn {
-			continue
 		}
 		for i := range poly {
 			j := (i + 1) % len(poly)
