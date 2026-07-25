@@ -6,6 +6,10 @@ export function Cut(arg1, arg2) {
   return window['go']['main']['App']['Cut'](arg1, arg2);
 }
 
+export function ExportAll() {
+  return window['go']['main']['App']['ExportAll']();
+}
+
 export function OpenModel() {
   return window['go']['main']['App']['OpenModel']();
 }

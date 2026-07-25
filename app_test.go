@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"stl-cutter/internal/fixtures"
@@ -358,5 +359,100 @@ func TestSelectRefusesAnUnknownPart(t *testing.T) {
 	}
 	if _, err := app.Select("nope"); err == nil {
 		t.Error("expected an error for an unknown part id")
+	}
+}
+
+func TestExportToWritesEveryLeaf(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+	if _, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	dir := t.TempDir()
+	out, err := app.exportTo(dir)
+	if err != nil {
+		t.Fatalf("exportTo: %v", err)
+	}
+	if len(out.Files) != 2 {
+		t.Fatalf("wrote %d files, want 2: %v", len(out.Files), out.Files)
+	}
+
+	// Every written file must be a readable STL with the volume the tree claims.
+	for _, name := range out.Files {
+		m, err := stl.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Errorf("%s does not read back as STL: %v", name, err)
+			continue
+		}
+		if v := m.Volume(); v < 499 || v > 501 {
+			t.Errorf("%s volume = %v, want about 500", name, v)
+		}
+	}
+}
+
+func TestExportToNamesFilesAfterTheModel(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "bracket.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	out, err := app.exportTo(t.TempDir())
+	if err != nil {
+		t.Fatalf("exportTo: %v", err)
+	}
+	if len(out.Files) != 1 {
+		t.Fatalf("wrote %d files, want 1", len(out.Files))
+	}
+	if !strings.HasPrefix(out.Files[0], "bracket_") || !strings.HasSuffix(out.Files[0], ".stl") {
+		t.Errorf("file name %q should be derived from the model name", out.Files[0])
+	}
+}
+
+// A flagged part is still exported — the user asked for it — but they must be
+// told which files are suspect.
+func TestExportToReportsFlaggedParts(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// Force a flagged leaf directly, since producing one through Cut reliably is
+	// awkward.
+	err := app.session.WithTree(func(tr *Tree) error {
+		_, _, err := tr.Split(tr.Root.ID, fixtures.Cube(5), fixtures.Cube(4), false, true)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+
+	out, err := app.exportTo(t.TempDir())
+	if err != nil {
+		t.Fatalf("exportTo: %v", err)
+	}
+	if len(out.NotWatertight) != 1 {
+		t.Errorf("NotWatertight = %v, want exactly one flagged file", out.NotWatertight)
+	}
+}
+
+func TestExportToReportsAnUnwritableDirectory(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.exportTo("/nonexistent/directory"); err == nil {
+		t.Error("expected an error for a directory that cannot be written to")
+	}
+}
+
+func TestExportWithNoModelOpen(t *testing.T) {
+	app := NewApp()
+	if _, err := app.exportTo(t.TempDir()); err == nil {
+		t.Error("expected an error when no model is open")
 	}
 }

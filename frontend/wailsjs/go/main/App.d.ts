@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function Cut(arg1:string,arg2:main.PlaneInput):Promise<main.CutOutcome>;
 
+export function ExportAll():Promise<main.ExportOutcome>;
+
 export function OpenModel():Promise<main.TreeView>;
 
 export function Select(arg1:string):Promise<main.TreeView>;

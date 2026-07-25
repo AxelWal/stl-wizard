@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -212,4 +213,64 @@ func (a *App) Select(partID string) (*TreeView, error) {
 		return nil, err
 	}
 	return a.view(), nil
+}
+
+// ExportOutcome tells the frontend where the files went and which of them the
+// user should look at twice.
+type ExportOutcome struct {
+	Dir           string   `json:"dir"`
+	Files         []string `json:"files"`
+	NotWatertight []string `json:"notWatertight"`
+}
+
+// ExportAll writes every leaf part as a binary STL into a folder the user picks.
+func (a *App) ExportAll() (*ExportOutcome, error) {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose a folder for the parts",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not open the folder dialog: %w", err)
+	}
+	if dir == "" {
+		return nil, nil // cancelled
+	}
+	return a.exportTo(dir)
+}
+
+// exportTo is ExportAll once a folder is known, split out so it can be tested
+// without a dialog.
+func (a *App) exportTo(dir string) (*ExportOutcome, error) {
+	out := &ExportOutcome{Dir: dir}
+
+	err := a.session.WithTree(func(tr *Tree) error {
+		base := strings.TrimSuffix(tr.ModelName, filepath.Ext(tr.ModelName))
+		for i, leaf := range tr.Leaves() {
+			name := fmt.Sprintf("%s_%s.stl", base, leaf.Name)
+			// Fall back to an index if a part name ever collides.
+			if contains(out.Files, name) {
+				name = fmt.Sprintf("%s_part%d.stl", base, i+1)
+			}
+			if err := stl.WriteFile(filepath.Join(dir, name), leaf.Mesh); err != nil {
+				return err
+			}
+			out.Files = append(out.Files, name)
+			if !leaf.Watertight {
+				out.NotWatertight = append(out.NotWatertight, name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }

@@ -114,6 +114,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ExportOutcome {
+	    dir: string;
+	    files: string[];
+	    notWatertight: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportOutcome(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dir = source["dir"];
+	        this.files = source["files"];
+	        this.notWatertight = source["notWatertight"];
+	    }
+	}
 	
 	export class PlaneInput {
 	    origin: number[];
