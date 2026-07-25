@@ -70,6 +70,27 @@ a system with webkit2gtk 4.0 instead of 4.1).
 - [ ] Open a model with hundreds of thousands of triangles and cut it. A progress
       bar appears and advances; the window stays responsive.
 
+## Alignment pins
+
+- [ ] Enable pins, cut a large model, and confirm the message reports how many were placed.
+- [ ] Export both pieces and open them in a slicer: one has raised pegs on the cut
+      face, the other matching sockets, and both are watertight.
+- [ ] The pegs line up with the sockets — same count, same positions.
+- [ ] Set the pin diameter larger than the cut face and cut. Every pin is skipped
+      and the reason names the clearance that was available.
+- [ ] Cut a thin-walled model with pins enabled. Pins are skipped for want of
+      material behind the face, not placed and broken through.
+- [ ] Set Min wall to 0.1 and repeat: more pins are now placed. That proves the
+      guard is doing the work rather than the geometry refusing anyway.
+
+## Fit to printer
+
+- [ ] Enter a bed smaller than the model and click Split to fit. The parts list
+      grows and every piece reports dimensions within the bed.
+- [ ] Enter a bed larger than the model. Nothing happens and the message says so.
+- [ ] Undo repeatedly after an auto-split. Every cut it made undoes one at a time.
+- [ ] Enter a bed of 0. A readable error appears rather than a hang.
+
 ## Errors
 
 - [ ] Cancelling the open dialog changes nothing and reports nothing.

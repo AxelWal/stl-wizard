@@ -4,20 +4,19 @@
 let els = {};
 
 export function initPins() {
-  const id = (name) => document.getElementById(name);
   els = {
-    enabled: id("pins-enabled"),
-    count: id("pins-count"),
-    diameter: id("pins-diameter"),
-    length: id("pins-length"),
-    clearance: id("pins-clearance"),
-    minwall: id("pins-minwall"),
-    pegside: id("pins-pegside"),
-    bedX: id("bed-x"),
-    bedY: id("bed-y"),
-    bedZ: id("bed-z"),
-    panel: id("pin-controls"),
-    bedPanel: id("bed-controls"),
+    enabled: document.getElementById("pins-enabled"),
+    count: document.getElementById("pins-count"),
+    diameter: document.getElementById("pins-diameter"),
+    length: document.getElementById("pins-length"),
+    clearance: document.getElementById("pins-clearance"),
+    minwall: document.getElementById("pins-minwall"),
+    pegside: document.getElementById("pins-pegside"),
+    bedX: document.getElementById("bed-x"),
+    bedY: document.getElementById("bed-y"),
+    bedZ: document.getElementById("bed-z"),
+    panel: document.getElementById("pin-controls"),
+    bedPanel: document.getElementById("bed-controls"),
   };
 }
 

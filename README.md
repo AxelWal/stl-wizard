@@ -4,6 +4,12 @@ Splits STL models into printable parts with a **bounded** cutting plane: the
 plane is restricted to a rectangle, so one cut can take the top off one arm of a
 U-shaped model without touching the other.
 
+- Alignment pins, with configurable diameter, length, clearance and a
+  minimum wall guard, so printed pieces peg together instead of just
+  matching at the cut.
+- Fit-to-printer auto-splitting, which repeatedly cuts an oversized model
+  down until every piece fits a given build volume.
+
 ## Running
 
 Requires Go 1.26 and the Wails v2 CLI:
@@ -50,6 +56,33 @@ Exits non-zero if either resulting part is not a closed solid.
 `internal/stl` and `internal/cut` import nothing from Wails and know nothing
 about the UI, so the geometry is testable with `go test` alone.
 
+## Pins
+
+Enabling pins adds a peg-and-socket pair to the cut face on every alignment
+pin the guard allows: one part gets raised pegs, the other matching bored
+sockets, so the two pieces locate against each other instead of just
+matching at the cut.
+
+The guard is a wall check, not a suggestion. A pin is skipped when there is
+not at least the minimum wall of material around it — in the plane of the
+cut face, clear of every edge and every other pin — or behind it, for the
+socket to be bored into without breaking through the far side. Every skip is
+reported with the measurement that caused it: what was actually there and
+what was required, so a run that places fewer pins than asked for always
+says why.
+
+## Releases
+
+Builds are produced by pushing a tag matching `v*`, which runs
+`.github/workflows/build.yml` on Linux, macOS and Windows runners and
+uploads a binary for each. macOS builds are unsigned; Gatekeeper will warn
+on first launch, and the user has to right-click and choose Open (or clear
+the quarantine attribute) to get past it.
+
+**The workflow itself has never been run.** It has been written and
+reviewed, but no tag has yet been pushed, so it has not executed on a real
+runner. The first tag push is what proves it actually works end to end.
+
 ## Known limitations
 
 All of these are reported at runtime — a part that is not a closed solid is
@@ -61,6 +94,16 @@ returned flagged, never silently.
   flagged.
 - Cutting costs about 5µs per triangle, so a two-million-triangle model takes
   around ten seconds per cut.
+- Pin placement samples the cut face on a grid rather than computing its
+  medial axis, and the behind-the-face wall check samples nine points
+  (the pin's centre and eight around its circumference) rather than
+  sweeping the whole footprint. Both are exact enough for the simple faces
+  a bounded cut produces; a far surface with a gap narrower than the sample
+  spacing could in principle slip through the wall check and be
+  overestimated.
+- Auto-split is axis-aligned only: a part that would fit the bed turned
+  diagonally is split anyway, because rotating to fit is a packing problem
+  and this is a splitter.
 - **The frontend has not been visually verified.** Every window-facing task
   in this project was implemented, built, and covered as far as static
   checks go, but no one has yet opened the window and driven it end to end.
