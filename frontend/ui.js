@@ -1,13 +1,15 @@
 import { initViewer, showParts, frameAll } from "./viewer.js";
-import { OpenModel, Select, Cut, Undo, ExportAll } from "./wailsjs/go/main/App.js";
+import { OpenModel, Select, Cut, Undo, ExportAll, AutoSplit } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
+import { initPins, pinSpec, bedSpec, showPanels, reportPins } from "./pins.js";
 
 const statusEl = document.getElementById("status");
 
 initViewer(document.getElementById("viewport"));
 initGizmo();
+initPins();
 
 const planeControls = document.getElementById("plane-controls");
 const widthEl = document.getElementById("plane-width");
@@ -99,6 +101,7 @@ async function render(tree) {
 
   treePanel.hidden = false;
   planeControls.hidden = false;
+  showPanels();
   actionsEl.hidden = false;
   undoBtn.disabled = !tree.canUndo;
   statusEl.textContent = `${tree.modelName} — ${parts.length} part(s)`;
@@ -126,7 +129,7 @@ cutBtn.addEventListener("click", async () => {
   clearMessages();
   busy(true);
   try {
-    const outcome = await Cut(currentTree.selectedId, planeInput(), { enabled: false });
+    const outcome = await Cut(currentTree.selectedId, planeInput(), pinSpec());
     await render(outcome.tree);
 
     // Warnings are shown whether or not the cut succeeded. A part that is not a
@@ -138,6 +141,7 @@ cutBtn.addEventListener("click", async () => {
     } else if (!(outcome.warnings || []).length) {
       message("Cut complete. Both pieces are closed solids.", "ok");
     }
+    reportPins(outcome, message);
   } catch (err) {
     message(String(err), "err");
   } finally {
@@ -168,6 +172,31 @@ exportBtn.addEventListener("click", async () => {
     message(`Wrote ${out.files.length} file(s) to ${out.dir}`, "ok");
     for (const f of out.notWatertight || []) {
       message(`${f} is not a closed solid and may not print correctly.`, "warn");
+    }
+  } catch (err) {
+    message(String(err), "err");
+  } finally {
+    busy(false);
+  }
+});
+
+document.getElementById("do-autosplit").addEventListener("click", async () => {
+  if (!currentTree) return;
+  clearMessages();
+  busy(true);
+  try {
+    const out = await AutoSplit(bedSpec(), pinSpec());
+    currentTree = out.tree;
+    await render(currentTree);
+
+    if (out.cutsMade === 0) {
+      message("Every piece already fits the bed. Nothing to do.", "ok");
+    } else {
+      message(`Split into ${out.cutsMade + 1} pieces.`, "ok");
+    }
+    for (const w of out.warnings || []) message(w, "warn");
+    for (const name of out.stillTooBig || []) {
+      message(`${name} still does not fit the bed.`, "warn");
     }
   } catch (err) {
     message(String(err), "err");

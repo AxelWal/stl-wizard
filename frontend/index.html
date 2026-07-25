@@ -32,6 +32,29 @@
           <label>Height <input id="plane-height" type="number" step="0.1" min="0.01" /></label>
           <button id="do-cut">Cut</button>
         </div>
+        <div id="pin-controls" hidden>
+          <h2>Alignment pins</h2>
+          <label><input id="pins-enabled" type="checkbox" /> Add pins to the cut</label>
+          <label>Count <input id="pins-count" type="number" min="1" step="1" value="4" /></label>
+          <label>Diameter mm <input id="pins-diameter" type="number" min="0.1" step="0.1" value="4" /></label>
+          <label>Length mm <input id="pins-length" type="number" min="0.1" step="0.1" value="8" /></label>
+          <label>Clearance mm <input id="pins-clearance" type="number" min="0" step="0.05" value="0.15" /></label>
+          <label>Min wall mm <input id="pins-minwall" type="number" min="0" step="0.1" value="1" /></label>
+          <label>Pegs on
+            <select id="pins-pegside">
+              <option value="2" selected>the cut-off piece</option>
+              <option value="1">the piece left behind</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="bed-controls" hidden>
+          <h2>Fit to printer</h2>
+          <label>Bed X mm <input id="bed-x" type="number" min="1" step="1" value="220" /></label>
+          <label>Bed Y mm <input id="bed-y" type="number" min="1" step="1" value="220" /></label>
+          <label>Bed Z mm <input id="bed-z" type="number" min="1" step="1" value="250" /></label>
+          <button id="do-autosplit">Split to fit</button>
+        </div>
         <div id="actions" hidden>
           <button id="do-undo">Undo cut</button>
           <button id="do-export">Export parts…</button>

@@ -42,3 +42,5 @@ button { width: 100%; padding: 6px; margin-bottom: 8px; cursor: pointer; }
 #progress { height: 4px; background: #333; margin-top: 10px; }
 #progress-bar { height: 100%; width: 0; background: #4a9eda; transition: width 0.1s linear; }
 button:disabled { opacity: 0.5; cursor: default; }
+#sidebar select { width: 100%; padding: 4px; }
+#sidebar label input[type="checkbox"] { width: auto; margin-right: 6px; }
