@@ -214,13 +214,17 @@ export function showGizmo() {
 }
 
 export function hideGizmo() {
-  // Restore orbiting first. TransformControls' pointer handlers all bail out
-  // when disabled, including the one that ends a drag and re-enables the
-  // camera — so disabling mid-drag would leave the camera dead with no error
-  // and no way back.
-  if (transform.dragging) {
+  // Restore orbiting first, for either kind of drag. TransformControls' pointer
+  // handlers all bail out when disabled, including the one that ends a drag and
+  // re-enables the camera; and a corner-handle drag is tracked separately, by
+  // `dragging`, so its pointerup would land on a hidden gizmo. Either way,
+  // disabling mid-drag would leave the camera dead with no error and no way back.
+  if (transform.dragging || dragging) {
     controlsRef().enabled = true;
   }
+  // Abandon any handle drag outright, so a later pointerup cannot resize a
+  // rectangle the user can no longer see.
+  dragging = null;
   group.visible = false;
   transform.visible = false;
   transform.enabled = false;
