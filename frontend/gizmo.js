@@ -14,12 +14,110 @@ let changeHandlers = [];
 let width = 10;
 let height = 10;
 
+let handles = [];       // four corner spheres
+let dragging = null;    // the handle currently being dragged
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+function handleRadius() {
+  return Math.max(width, height) * 0.03;
+}
+
+function layoutHandles() {
+  // buildHandles() runs at the end of initGizmo(), after the quad exists but
+  // before rebuildQuad() is ever called again — so handles is never empty by
+  // the time layoutHandles() runs. Guarded anyway: cheaper than proving it.
+  if (!handles.length) return;
+
+  const r = handleRadius();
+  const hw = width / 2;
+  const hh = height / 2;
+  const corners = [
+    [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh],
+  ];
+  handles.forEach((h, i) => {
+    h.position.set(corners[i][0], corners[i][1], 0);
+    h.scale.setScalar(r);
+  });
+}
+
+function buildHandles() {
+  const geo = new THREE.SphereGeometry(1, 12, 8);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffcc44 });
+  for (let i = 0; i < 4; i++) {
+    const h = new THREE.Mesh(geo, mat);
+    h.userData.corner = i;
+    handles.push(h);
+    group.add(h);
+  }
+  layoutHandles();
+}
+
+// ponytail: a corner drag resizes symmetrically about the plane's centre rather
+// than pinning the opposite corner, so the rectangle stays centred on the origin
+// the cut uses. That keeps planeInput() a straight read of the transform.
+// Upgrade path if off-centre rectangles are wanted: move the group's origin as
+// the extent changes and keep the cut origin at the rectangle's centre.
+function installHandleDragging() {
+  const el = domElement();
+
+  const toPointer = (event) => {
+    const rect = el.getBoundingClientRect();
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  };
+
+  el.addEventListener("pointerdown", (event) => {
+    if (!group.visible) return;
+    toPointer(event);
+    raycaster.setFromCamera(pointer, cameraRef());
+    const hit = raycaster.intersectObjects(handles, false)[0];
+    if (!hit) return;
+
+    dragging = hit.object;
+    controlsRef().enabled = false;   // do not orbit mid-resize
+    transform.enabled = false;       // do not also translate
+    el.setPointerCapture(event.pointerId);
+    event.stopPropagation();
+  });
+
+  el.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    toPointer(event);
+    raycaster.setFromCamera(pointer, cameraRef());
+
+    // Intersect the ray with the gizmo's own plane, then read the hit in the
+    // group's local frame — that gives the new half-extents directly.
+    group.updateMatrixWorld();
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(group.quaternion);
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, group.position);
+
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(plane, hit)) return;
+
+    const local = group.worldToLocal(hit.clone());
+    setExtent(Math.abs(local.x) * 2, Math.abs(local.y) * 2);
+  });
+
+  const endDrag = (event) => {
+    if (!dragging) return;
+    dragging = null;
+    controlsRef().enabled = true;
+    transform.enabled = true;
+    if (el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
+  };
+  el.addEventListener("pointerup", endDrag);
+  el.addEventListener("pointercancel", endDrag);
+}
+
 function rebuildQuad() {
   quad.geometry.dispose();
   quad.geometry = new THREE.PlaneGeometry(width, height);
 
   frame.geometry.dispose();
   frame.geometry = new THREE.EdgesGeometry(new THREE.PlaneGeometry(width, height));
+
+  layoutHandles();
 }
 
 export function initGizmo() {
@@ -73,6 +171,9 @@ export function initGizmo() {
   // expose a helper object. Support both rather than pinning behaviour.
   const helper = transform.getHelper ? transform.getHelper() : transform;
   sceneRoot().add(helper);
+
+  buildHandles();
+  installHandleDragging();
 
   return { setMode, showGizmo, hideGizmo, planeInput };
 }
