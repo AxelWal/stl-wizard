@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"math"
 	"os"
 	"path/filepath"
@@ -685,5 +686,72 @@ func TestAutoSplitWithNoModelOpen(t *testing.T) {
 	app := NewApp()
 	if _, err := app.AutoSplit(cut.Bed{X: 220, Y: 220, Z: 250}, cut.PinSpec{}); err == nil {
 		t.Error("expected an error when no model is open")
+	}
+}
+
+// Cuts that already committed must be reported even when a later one fails.
+// Returning a bare error would leave the caller unaware the model changed, and
+// the window showing geometry that no longer exists.
+func TestAutoSplitReportsProgressWhenACutFails(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// A bed small enough to need many cuts, so the run is long enough that
+	// stopping partway leaves real progress behind.
+	out, err := app.AutoSplit(cut.Bed{X: 40, Y: 40, Z: 40}, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AutoSplit returned an error rather than a partial outcome: %v", err)
+	}
+	if out == nil {
+		t.Fatal("a nil outcome tells the caller nothing about what happened")
+	}
+	if out.Tree == nil {
+		t.Error("the outcome must carry the tree, or the window cannot re-render")
+	}
+	// Whatever happened, the reported cut count must match the tree.
+	leaves := len(app.session.Tree().Leaves())
+	if out.CutsMade != leaves-1 {
+		t.Errorf("CutsMade = %d but the tree has %d leaves (%d cuts)", out.CutsMade, leaves, leaves-1)
+	}
+}
+
+// One user-visible operation emits one start/done pair, however many cuts it
+// makes internally — otherwise a long auto-split flickers the progress bar once
+// per cut instead of showing one continuous run. cutPart's cut:progress still
+// fires once per cut, from the geometry library's own callback, so the bar
+// keeps advancing during the run.
+func TestAutoSplitBracketsTheWholeRunWithOneEventPair(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var starts, dones, progresses int
+	app.ctx = context.Background()
+	app.emitFunc = func(_ context.Context, name string, _ ...interface{}) {
+		switch name {
+		case "cut:start":
+			starts++
+		case "cut:done":
+			dones++
+		case "cut:progress":
+			progresses++
+		}
+	}
+
+	if _, err := app.AutoSplit(cut.Bed{X: 100, Y: 100, Z: 100}, cut.PinSpec{}); err != nil {
+		t.Fatalf("AutoSplit: %v", err)
+	}
+
+	if starts != 1 {
+		t.Errorf("cut:start fired %d times, want exactly 1 for the whole run", starts)
+	}
+	if dones != 1 {
+		t.Errorf("cut:done fired %d times, want exactly 1 for the whole run", dones)
+	}
+	if progresses <= 1 {
+		t.Errorf("cut:progress fired %d times, want more than 1 across a multi-cut run", progresses)
 	}
 }

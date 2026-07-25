@@ -18,9 +18,15 @@ import (
 type App struct {
 	ctx     context.Context
 	session *Session
+
+	// emitFunc is the low-level event sink. It defaults to the real Wails
+	// runtime call; tests override it to count events without a frontend.
+	emitFunc func(ctx context.Context, name string, data ...interface{})
 }
 
-func NewApp() *App { return &App{session: &Session{}} }
+func NewApp() *App {
+	return &App{session: &Session{}, emitFunc: runtime.EventsEmit}
+}
 
 // startup stores the context Wails hands us. Every runtime call — dialogs,
 // events — needs it.
@@ -34,7 +40,7 @@ func (a *App) emit(name string, data ...interface{}) {
 	if a.ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, name, data...)
+	a.emitFunc(a.ctx, name, data...)
 }
 
 // TreeView is the tree as the frontend sees it. It is a separate type from Tree
@@ -167,6 +173,9 @@ func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, e
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
+
+	a.emit("cut:start")
+	defer a.emit("cut:done")
 	return a.cutPart(partID, spec, pins)
 }
 
@@ -176,9 +185,6 @@ func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, e
 // Spec comes from — so the part tree, the undo history, pin placement and the
 // watertightness reporting behave identically for both.
 func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutcome, error) {
-	a.emit("cut:start")
-	defer a.emit("cut:done")
-
 	var res *cut.Result
 	var pinRes *cut.PinResult
 	err := a.session.WithTree(func(tr *Tree) error {
@@ -257,6 +263,9 @@ type AutoSplitOutcome struct {
 func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error) {
 	out := &AutoSplitOutcome{}
 
+	a.emit("cut:start")
+	defer a.emit("cut:done")
+
 	for {
 		target, err := a.firstOversizedLeaf(bed)
 		if err != nil {
@@ -280,7 +289,12 @@ func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error
 
 		res, err := a.cutPart(target, steps[0].Spec, pins)
 		if err != nil {
-			return nil, err
+			// Earlier cuts have already committed to the tree. Returning a bare
+			// error would leave the caller unaware the model changed at all, and
+			// the window showing geometry that no longer exists.
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"stopped after %d cut(s): %v", out.CutsMade, err))
+			break
 		}
 		out.CutsMade++
 		out.Warnings = append(out.Warnings, res.Warnings...)
