@@ -145,10 +145,20 @@ func groupHoleCounts(gs []faceGroup) []int {
 // Two rings touching at a single shared vertex are two separate solid regions.
 // assembleLoops emits exactly this shape when it splits a pinch point, and the old
 // vertex-based containment probe merged them, demoting one to a hole of the other.
+//
+// The two triangles are point-reflections of each other through the shared
+// vertex at the origin, and each loop lists that shared vertex first. That is
+// exactly the shape the old probe (loops[i][0].P2) got wrong:
+// pointInLoop((0,0), b) returns true purely from the crossing-number test's
+// tie-break at a vertex coincident with the probed point, even though (0,0)
+// only touches b's boundary and encloses nothing. pointInLoop((0,0), a)
+// returns false for the mirrored triangle, so the old probe misclassified a
+// as a hole of b while leaving b alone -- an axis-aligned "square touching a
+// square" fixture never exercises this, because the tie-break happens to
+// come out right on that symmetric shape.
 func TestGroupLoopsKeepsRingsTouchingAtAVertexSeparate(t *testing.T) {
-	// Two unit squares meeting at the origin, diagonally opposite each other.
-	a := projectZ(Polygon{{-2, 0, 0}, {0, 0, 0}, {0, 2, 0}, {-2, 2, 0}})
-	b := projectZ(Polygon{{0, -2, 0}, {2, -2, 0}, {2, 0, 0}, {0, 0, 0}})
+	a := projectZ(Polygon{{0, 0, 0}, {-3, 1, 0}, {-1, -3, 0}})
+	b := projectZ(Polygon{{0, 0, 0}, {3, -1, 0}, {1, 3, 0}})
 
 	groups := groupLoops([]faceLoop{a, b})
 
@@ -165,11 +175,12 @@ func TestGroupLoopsKeepsRingsTouchingAtAVertexSeparate(t *testing.T) {
 	}
 }
 
-// Order of the input must not change the verdict. The old probe gave opposite
-// answers depending on which loop was asked about first.
+// Order of the input must not change the verdict. Under the old probe this
+// pair was misclassified as a hole-and-outer regardless of which loop came
+// first in the slice; the fix must keep both separate regardless of order too.
 func TestGroupLoopsTouchingRingsAreOrderIndependent(t *testing.T) {
-	a := projectZ(Polygon{{-2, 0, 0}, {0, 0, 0}, {0, 2, 0}, {-2, 2, 0}})
-	b := projectZ(Polygon{{0, -2, 0}, {2, -2, 0}, {2, 0, 0}, {0, 0, 0}})
+	a := projectZ(Polygon{{0, 0, 0}, {-3, 1, 0}, {-1, -3, 0}})
+	b := projectZ(Polygon{{0, 0, 0}, {3, -1, 0}, {1, 3, 0}})
 
 	forward := groupLoops([]faceLoop{a, b})
 	reverse := groupLoops([]faceLoop{b, a})
