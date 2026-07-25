@@ -94,6 +94,13 @@ func (s Spec) Validate() error {
 	if s.U.Len() == 0 || s.V.Len() == 0 {
 		return errors.New("cutting plane has a degenerate in-plane basis")
 	}
+	// U must not be parallel to Normal. Basis re-orthogonalises U against Normal,
+	// so a parallel U collapses to the zero vector, and a zero basis makes all four
+	// rectangle-side planes no-ops — the cutter silently loses its bound and cuts
+	// the whole model instead of the region the user marked out.
+	if math.Abs(s.U.Unit().Dot(s.Normal.Unit())) > 1-1e-6 {
+		return errors.New("cutting plane basis vector U is parallel to the plane normal, which would leave the cut unbounded")
+	}
 	// U and V must span the plane. Requiring them merely non-parallel is enough;
 	// Basis re-orthogonalises.
 	if s.U.Unit().Cross(s.V.Unit()).Len() < 1e-6 {

@@ -102,3 +102,59 @@ func TestBasisIsRightHanded(t *testing.T) {
 		}
 	}
 }
+
+// A U parallel to Normal used to pass validation and then collapse Basis to zero
+// vectors, which turned all four rectangle-side planes into no-ops and silently
+// unbounded the cutter.
+func TestValidateRejectsUParallelToNormal(t *testing.T) {
+	s := Spec{
+		Normal: geom.Vec3{0, 0, 1},
+		U:      geom.Vec3{0, 0, 1},
+		V:      geom.Vec3{1, 0, 0},
+		Width:  1,
+		Height: 1,
+	}
+	if err := s.Validate(); err == nil {
+		t.Fatal("expected an error for a U parallel to the normal")
+	}
+}
+
+// Basis re-orthogonalises U against Normal. Only SpecFromNormal was exercising
+// Basis, and it always supplies an already-perpendicular U, so this branch was
+// never actually tested.
+func TestBasisReorthogonalisesASkewedU(t *testing.T) {
+	s := Spec{
+		Normal: geom.Vec3{0, 0, 1},
+		U:      geom.Vec3{1, 0, 0.5}, // not perpendicular to Normal
+		V:      geom.Vec3{0, 1, 0},
+		Width:  1,
+		Height: 1,
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("skewed but usable U was rejected: %v", err)
+	}
+
+	u, v := s.Basis()
+	if math.Abs(u.Dot(s.Normal)) > 1e-12 {
+		t.Errorf("u is not perpendicular to the normal: u.n = %v", u.Dot(s.Normal))
+	}
+	if math.Abs(u.Len()-1) > 1e-12 || math.Abs(v.Len()-1) > 1e-12 {
+		t.Errorf("basis vectors are not unit length: |u|=%v |v|=%v", u.Len(), v.Len())
+	}
+	if got := u.Cross(v); got.Sub(s.Normal.Unit()).Len() > 1e-12 {
+		t.Errorf("u cross v = %v, want %v", got, s.Normal.Unit())
+	}
+}
+
+// Later tasks index Planes() by position: element 0 is the plane the user placed,
+// and pin placement operates on that plane's caps alone.
+func TestPlanesElementZeroIsTheCutPlane(t *testing.T) {
+	s := SpecFromNormal(geom.Vec3{1, 2, 3}, geom.Vec3{0, 1, 0}, 10, 10)
+	p := s.Planes()[0]
+	if p.N.Sub(s.Normal.Unit()).Len() > 1e-12 {
+		t.Errorf("Planes()[0].N = %v, want the spec normal %v", p.N, s.Normal.Unit())
+	}
+	if math.Abs(p.Dist(s.Origin)) > 1e-12 {
+		t.Errorf("the spec origin should lie on Planes()[0], got distance %v", p.Dist(s.Origin))
+	}
+}
