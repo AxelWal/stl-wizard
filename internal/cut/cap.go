@@ -49,18 +49,24 @@ func triangulateFace(polys []Polygon, p Plane, eps float64) (tris []stl.Tri, ope
 		projected = append(projected, projectLoop(l, origin, u, v))
 	}
 
-	minArea := eps * eps
 	for _, g := range groupLoops(projected) {
 		merged := bridgeHoles(g.Outer, g.Holes)
 		idxTris, ok := earClip(merged)
 		if !ok {
 			incomplete++
 		}
+		// Every triangle earClip returns is emitted, however small. earClip
+		// already guarantees no degenerate output — isEar rejects a corner unless
+		// cross2 > 0 and the final triangle is guarded the same way — and it
+		// returns a triangulation that is complete or nothing at all. Culling by
+		// area afterwards can therefore only remove a legitimate member of a
+		// complete triangulation, and doing so drops that triangle's two boundary
+		// edges from the cap while the clipped surface still carries them: the
+		// part silently stops being watertight. Under an oblique plane basis a
+		// perfectly legitimate sliver falls below eps*eps, which is exactly how
+		// that used to happen.
 		for _, tr := range idxTris {
-			t := stl.Tri{A: merged[tr[0]].P3, B: merged[tr[1]].P3, C: merged[tr[2]].P3}
-			if t.Area() > minArea {
-				tris = append(tris, t)
-			}
+			tris = append(tris, stl.Tri{A: merged[tr[0]].P3, B: merged[tr[1]].P3, C: merged[tr[2]].P3})
 		}
 	}
 	return tris, open, incomplete
