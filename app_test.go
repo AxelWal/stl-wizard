@@ -259,3 +259,104 @@ func TestViewReturnsADeepCopy(t *testing.T) {
 		t.Error("a snapshot must not carry a mesh reference")
 	}
 }
+
+func TestUndoRestoresThePreviousState(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+	if _, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	view, err := app.Undo()
+	if err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if len(view.Root.Children) != 0 {
+		t.Errorf("root still has %d children after undo", len(view.Root.Children))
+	}
+	if view.CanUndo {
+		t.Error("nothing left to undo")
+	}
+	if view.SelectedID != id {
+		t.Errorf("SelectedID = %q, want the restored part %q", view.SelectedID, id)
+	}
+
+	// The restored part must be fetchable again, or the viewer cannot redraw it.
+	if _, ok := app.session.MeshFor(id); !ok {
+		t.Error("the restored part has no mesh")
+	}
+}
+
+func TestUndoWithNothingToUndo(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.Undo(); err == nil {
+		t.Error("expected an error undoing a freshly loaded model")
+	}
+}
+
+func TestUndoWithNoModelOpen(t *testing.T) {
+	app := NewApp()
+	if _, err := app.Undo(); err == nil {
+		t.Error("expected an error when no model is open")
+	}
+}
+
+func TestSelectChangesTheSelection(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	second := out.Tree.Root.Children[1].ID
+
+	view, err := app.Select(second)
+	if err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if view.SelectedID != second {
+		t.Errorf("SelectedID = %q, want %q", view.SelectedID, second)
+	}
+}
+
+// Only leaves carry geometry, so selecting a split part would leave the viewer
+// with nothing to show.
+func TestSelectRefusesASplitPart(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+	if _, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	if _, err := app.Select(id); err == nil {
+		t.Error("expected an error selecting a part that has been split")
+	}
+}
+
+func TestSelectRefusesAnUnknownPart(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.Select("nope"); err == nil {
+		t.Error("expected an error for an unknown part id")
+	}
+}

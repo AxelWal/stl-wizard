@@ -184,3 +184,32 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 		Warnings:   res.Warnings,
 	}, nil
 }
+
+// Undo reverses the most recent cut and re-selects the part it restored.
+func (a *App) Undo() (*TreeView, error) {
+	err := a.session.WithTree(func(tr *Tree) error { return tr.Undo() })
+	if err != nil {
+		return nil, err
+	}
+	return a.view(), nil
+}
+
+// Select changes which part the next cut applies to. Only leaves can be
+// selected: a part that has been split has no geometry of its own.
+func (a *App) Select(partID string) (*TreeView, error) {
+	err := a.session.WithTree(func(tr *Tree) error {
+		p := tr.Find(partID)
+		if p == nil {
+			return fmt.Errorf("no part with id %q", partID)
+		}
+		if !p.IsLeaf() {
+			return fmt.Errorf("%q has been split; select one of its pieces", p.Name)
+		}
+		tr.SelectedID = partID
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.view(), nil
+}

@@ -9,3 +9,11 @@ export function Cut(arg1, arg2) {
 export function OpenModel() {
   return window['go']['main']['App']['OpenModel']();
 }
+
+export function Select(arg1) {
+  return window['go']['main']['App']['Select'](arg1);
+}
+
+export function Undo() {
+  return window['go']['main']['App']['Undo']();
+}
