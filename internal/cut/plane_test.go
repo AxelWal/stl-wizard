@@ -138,6 +138,13 @@ func TestBasisReorthogonalisesASkewedU(t *testing.T) {
 	if math.Abs(u.Dot(s.Normal)) > 1e-12 {
 		t.Errorf("u is not perpendicular to the normal: u.n = %v", u.Dot(s.Normal))
 	}
+	// Assert the actual value, not just that u is some valid perpendicular.
+	// Projecting U = {1, 0, 0.5} onto the plane normal to {0, 0, 1} and normalising
+	// gives exactly {1, 0, 0}; a Basis that ignored U could still satisfy every
+	// generic invariant below.
+	if want := (geom.Vec3{1, 0, 0}); u.Sub(want).Len() > 1e-12 {
+		t.Errorf("u = %v, want %v — Basis is not deriving u from U", u, want)
+	}
 	if math.Abs(u.Len()-1) > 1e-12 || math.Abs(v.Len()-1) > 1e-12 {
 		t.Errorf("basis vectors are not unit length: |u|=%v |v|=%v", u.Len(), v.Len())
 	}
