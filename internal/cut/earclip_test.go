@@ -89,7 +89,7 @@ func TestRightmostIdx(t *testing.T) {
 
 func TestVisibleVertexPicksAReachableVertexToTheRight(t *testing.T) {
 	outer := projectZ(square(0, 0, 5))
-	i := visibleVertex(outer, pt2{0, 0})
+	i := visibleVertex(outer, pt2{0, 0}, nil)
 	if outer[i].P2.X < 0 {
 		t.Fatalf("chose vertex %v, want one at or right of the probe", outer[i].P2)
 	}
@@ -244,6 +244,50 @@ func TestSegmentsProperlyCrossIsOrientationSymmetric(t *testing.T) {
 	// A genuine crossing must still be reported.
 	if !segmentsProperlyCross(pt2{0, 0}, pt2{2, 2}, pt2{0, 2}, pt2{2, 0}) {
 		t.Error("crossing diagonals should report a crossing")
+	}
+}
+
+// Several holes arranged so that the second and third bridges would naturally
+// land on the outer vertex the first bridge already used. bridgeHoles duplicates
+// its landing vertex, so a second channel through the same point makes the merged
+// loop non-simple — the position appears three times — and ear clipping cannot
+// complete. Both configurations were found by fuzzing: they yield ok = false
+// before visibleVertex learned to skip already-duplicated vertices.
+func TestBridgeHolesDoesNotStackChannelsOnOneVertex(t *testing.T) {
+	cases := []struct {
+		name     string
+		centres  [][2]float64
+		wantArea float64
+	}{
+		// Two holes stacked in the left column: both see the same outer corner as
+		// their nearest reachable vertex to the right.
+		{"two holes, one column", [][2]float64{{-3, -3}, {-3, 3}}, 100 - 2*4},
+		{"three holes", [][2]float64{{-3, -3}, {-3, 0}, {0, 3}}, 100 - 3*4},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outer := projectZ(square(0, 0, 5)) // 10x10, area 100
+			holes := make([]faceLoop, 0, len(tc.centres))
+			for _, c := range tc.centres {
+				holes = append(holes, reverseLoop(projectZ(square(c[0], c[1], 1)))) // 2x2, area 4
+			}
+			merged := bridgeHoles(outer, holes)
+
+			seen := map[pt2]int{}
+			for _, v := range merged {
+				if seen[v.P2]++; seen[v.P2] > 2 {
+					t.Fatalf("position %v appears %d times; a channel was stacked on a duplicated vertex",
+						v.P2, seen[v.P2])
+				}
+			}
+
+			tris, ok := earClip(merged)
+			if !ok {
+				t.Fatalf("ok = false, want a complete triangulation")
+			}
+			assertTriangulationSound(t, merged, tris, tc.wantArea)
+		})
 	}
 }
 

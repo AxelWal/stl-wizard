@@ -36,10 +36,20 @@ func rightmostIdx(l faceLoop) int {
 // without the join crossing any edge of poly. Candidates at or right of m are
 // preferred and the nearest is taken, because bridging proceeds rightward.
 //
+// avoid counts how often each position already appears in poly. A position that
+// appears twice already carries a bridge channel, and a second channel through
+// it would pinch the merged loop at that point — the loop stops being simple,
+// so no ear test can prove a corner there safe and ear clipping cannot complete.
+// Such candidates are therefore skipped, in both the rightward search and the
+// fallback. If every visible candidate is already duplicated the skip is
+// dropped: a duplicated landing still beats an arbitrary index.
+//
 // ponytail: O(n^2) per hole. Caps have tens to low hundreds of boundary
 // vertices, so this is immaterial. Upgrade path if a cap ever gets large: the
 // Eberly ray-cast construction, which finds a visible vertex in one pass.
-func visibleVertex(poly faceLoop, m pt2) int {
+func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int) int {
+	duplicated := func(i int) bool { return avoid[poly[i].P2] >= 2 }
+
 	clear := func(i int) bool {
 		v := poly[i].P2
 		for k := range poly {
@@ -54,26 +64,33 @@ func visibleVertex(poly faceLoop, m pt2) int {
 		return true
 	}
 
-	best, bestDist := -1, math.Inf(1)
-	for i := range poly {
-		v := poly[i].P2
-		if v.X < m.X {
-			continue
+	// Two passes: the first skips already-duplicated vertices, the second accepts
+	// them because nothing else was reachable.
+	for _, strict := range []bool{true, false} {
+		best, bestDist := -1, math.Inf(1)
+		for i := range poly {
+			v := poly[i].P2
+			if v.X < m.X || (strict && duplicated(i)) {
+				continue
+			}
+			dx, dy := v.X-m.X, v.Y-m.Y
+			d := dx*dx + dy*dy
+			if d >= bestDist || !clear(i) {
+				continue
+			}
+			best, bestDist = i, d
 		}
-		dx, dy := v.X-m.X, v.Y-m.Y
-		d := dx*dx + dy*dy
-		if d >= bestDist || !clear(i) {
-			continue
+		if best >= 0 {
+			return best
 		}
-		best, bestDist = i, d
-	}
-	if best >= 0 {
-		return best
-	}
-	// Nothing to the right was reachable — accept any visible vertex.
-	for i := range poly {
-		if clear(i) {
-			return i
+		// Nothing to the right was reachable — accept any visible vertex.
+		for i := range poly {
+			if strict && duplicated(i) {
+				continue
+			}
+			if clear(i) {
+				return i
+			}
 		}
 	}
 	return 0
@@ -100,9 +117,16 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 		if len(h) < 3 {
 			continue
 		}
+		// ponytail: recounted per hole rather than maintained incrementally. Holes
+		// number in the low tens, so O(holes * n) is free and cannot drift.
+		counts := make(map[pt2]int, len(result))
+		for _, v := range result {
+			counts[v.P2]++
+		}
+
 		hi := rightmostIdx(h)
 		entry := h[hi]
-		pi := visibleVertex(result, entry.P2)
+		pi := visibleVertex(result, entry.P2, counts)
 
 		spliced := make(faceLoop, 0, len(result)+len(h)+2)
 		spliced = append(spliced, result[:pi+1]...)
