@@ -1,0 +1,54 @@
+// Command genfixture writes a named test fixture to an STL file, so fixtures can
+// be opened in a slicer or fed to cutdemo without going through a Go test.
+//
+//	genfixture -name u -out testdata/u.stl
+package main
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+
+	"stl-cutter/internal/fixtures"
+	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
+)
+
+func build(name string) (*stl.Mesh, error) {
+	switch name {
+	case "u":
+		return fixtures.UShape(10), nil
+	case "cube":
+		return fixtures.Cube(10), nil
+	case "sphere":
+		return fixtures.UVSphere(10, 48, 24), nil
+	case "tube":
+		return fixtures.Tube(5, 3, 20, 48), nil
+	case "hollowbox":
+		return fixtures.HollowBox(geom.Vec3{20, 20, 20}, 1), nil
+	default:
+		return nil, fmt.Errorf("unknown fixture %q; want u, cube, sphere, tube or hollowbox", name)
+	}
+}
+
+func main() {
+	name := flag.String("name", "", "fixture to write: u, cube, sphere, tube, hollowbox")
+	out := flag.String("out", "", "output STL path")
+	flag.Parse()
+
+	err := func() error {
+		if *name == "" || *out == "" {
+			return errors.New("-name and -out are both required")
+		}
+		m, err := build(*name)
+		if err != nil {
+			return err
+		}
+		return stl.WriteFile(*out, m)
+	}()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "genfixture:", err)
+		os.Exit(1)
+	}
+}
