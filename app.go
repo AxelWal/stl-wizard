@@ -167,7 +167,15 @@ func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, e
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
+	return a.cutPart(partID, spec, pins)
+}
 
+// cutPart performs one cut on a leaf and applies pins to the cut face, then
+// folds the result into the tree. Cut and AutoSplit both go through here —
+// the only difference between a manual cut and an automatic one is where the
+// Spec comes from — so the part tree, the undo history, pin placement and the
+// watertightness reporting behave identically for both.
+func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutcome, error) {
 	a.emit("cut:start")
 	defer a.emit("cut:done")
 
@@ -215,6 +223,121 @@ func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, e
 		PinsPlaced:  pinRes.Placed,
 		PinsSkipped: pinRes.Skipped,
 	}, nil
+}
+
+// maxAutoSplitCuts caps the AutoSplit loop so a pathological bed/model
+// combination is reported rather than left to run indefinitely.
+const maxAutoSplitCuts = 512
+
+// AutoSplitOutcome reports what auto-splitting did and what it could not manage.
+type AutoSplitOutcome struct {
+	Tree        *TreeView `json:"tree"`
+	CutsMade    int       `json:"cutsMade"`
+	StillTooBig []string  `json:"stillTooBig"`
+	Warnings    []string  `json:"warnings"`
+}
+
+// AutoSplit divides the open model until every piece fits the given build
+// volume.
+//
+// Each pass finds one leaf that does not fit, plans cuts from that leaf's own
+// mesh with cut.PlanAutoSplit, and applies only the first of those steps
+// through cutPart — the same path Cut uses for a manual cut. It then loops
+// and re-scans, rather than computing one plan up front and replaying every
+// step of it.
+//
+// That matters because PlanAutoSplit predicts from bounding boxes. A shape
+// that does not fill its box — a U, an L, a hollow shell — makes those
+// predictions over-estimates, so a plan computed once and replayed across a
+// tree of real meshes can let one branch's cut slice a sibling piece that
+// only shares a predicted footprint. Replanning from each real leaf, every
+// iteration, sidesteps that: every plan is derived from geometry that
+// actually exists. It also means every cut AutoSplit makes lands as its own
+// undoable step, exactly like a manual one.
+func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error) {
+	out := &AutoSplitOutcome{}
+
+	for {
+		target, err := a.firstOversizedLeaf(bed)
+		if err != nil {
+			return nil, err
+		}
+		if target == "" {
+			break // everything fits
+		}
+
+		mesh, ok := a.session.MeshFor(target)
+		if !ok {
+			return nil, fmt.Errorf("part %q has no geometry", target)
+		}
+		steps, err := cut.PlanAutoSplit(mesh, bed)
+		if err != nil {
+			return nil, err
+		}
+		if len(steps) == 0 {
+			break // PlanAutoSplit has nothing left to offer for this leaf
+		}
+
+		res, err := a.cutPart(target, steps[0].Spec, pins)
+		if err != nil {
+			return nil, err
+		}
+		out.CutsMade++
+		out.Warnings = append(out.Warnings, res.Warnings...)
+
+		if out.CutsMade >= maxAutoSplitCuts {
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"stopped after %d cuts; the bed may be too small for this model", maxAutoSplitCuts))
+			break
+		}
+	}
+
+	tooBig, err := a.oversizedLeaves(bed)
+	if err != nil {
+		return nil, err
+	}
+	out.StillTooBig = tooBig
+	out.Tree = a.view()
+	return out, nil
+}
+
+// firstOversizedLeaf returns the id of the first leaf that does not fit bed,
+// or "" once every leaf fits.
+func (a *App) firstOversizedLeaf(bed cut.Bed) (string, error) {
+	var id string
+	err := a.session.WithTree(func(tr *Tree) error {
+		for _, leaf := range tr.Leaves() {
+			if !bed.Fits(leafBBox(leaf)) {
+				id = leaf.ID
+				return nil
+			}
+		}
+		return nil
+	})
+	return id, err
+}
+
+// oversizedLeaves names every leaf that does not fit bed.
+func (a *App) oversizedLeaves(bed cut.Bed) ([]string, error) {
+	var names []string
+	err := a.session.WithTree(func(tr *Tree) error {
+		for _, leaf := range tr.Leaves() {
+			if !bed.Fits(leafBBox(leaf)) {
+				names = append(names, leaf.Name)
+			}
+		}
+		return nil
+	})
+	return names, err
+}
+
+// leafBBox reconstructs a part's bounding box from the Min/Size pair it
+// carries for the frontend.
+func leafBBox(p *Part) stl.BBox {
+	return stl.BBox{
+		Min: geom.Vec3{p.Min[0], p.Min[1], p.Min[2]},
+		Max: geom.Vec3{p.Min[0] + p.Size[0], p.Min[1] + p.Size[1], p.Min[2] + p.Size[2]},
+	}
 }
 
 // Undo reverses the most recent cut and re-selects the part it restored.

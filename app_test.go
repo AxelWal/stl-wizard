@@ -596,3 +596,94 @@ func TestCutWithoutPinsIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoSplitLeavesAFittingModelAlone(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	out, err := app.AutoSplit(cut.Bed{X: 220, Y: 220, Z: 250}, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AutoSplit: %v", err)
+	}
+	if out.CutsMade != 0 {
+		t.Errorf("made %d cuts on a model that already fits", out.CutsMade)
+	}
+	if len(out.Tree.Root.Children) != 0 {
+		t.Error("the tree should be untouched")
+	}
+}
+
+func TestAutoSplitDividesAnOversizedModel(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	bed := cut.Bed{X: 120, Y: 120, Z: 120}
+	out, err := app.AutoSplit(bed, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AutoSplit: %v", err)
+	}
+	if out.CutsMade == 0 {
+		t.Fatal("made no cuts on a model far larger than the bed")
+	}
+
+	// Every leaf must now fit, or be named as one that does not.
+	var tooBig int
+	for _, leaf := range app.session.Tree().Leaves() {
+		box := stl.BBox{
+			Min: geom.Vec3{leaf.Min[0], leaf.Min[1], leaf.Min[2]},
+			Max: geom.Vec3{leaf.Min[0] + leaf.Size[0], leaf.Min[1] + leaf.Size[1], leaf.Min[2] + leaf.Size[2]},
+		}
+		if !bed.Fits(box) {
+			tooBig++
+		}
+	}
+	if tooBig != len(out.StillTooBig) {
+		t.Errorf("%d leaves do not fit but %d were reported", tooBig, len(out.StillTooBig))
+	}
+}
+
+func TestAutoSplitIsUndoable(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.AutoSplit(cut.Bed{X: 120, Y: 120, Z: 120}, cut.PinSpec{}); err != nil {
+		t.Fatalf("AutoSplit: %v", err)
+	}
+
+	// Every cut it made must be undoable one at a time, like any other cut.
+	undone := 0
+	for app.session.Tree().CanUndo() {
+		if _, err := app.Undo(); err != nil {
+			t.Fatalf("Undo after %d: %v", undone, err)
+		}
+		undone++
+	}
+	if undone == 0 {
+		t.Fatal("auto-split left nothing to undo")
+	}
+	if len(app.session.Tree().Leaves()) != 1 {
+		t.Errorf("after undoing everything there are %d leaves, want 1", len(app.session.Tree().Leaves()))
+	}
+}
+
+func TestAutoSplitRejectsANonsenseBed(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.AutoSplit(cut.Bed{X: 0, Y: 100, Z: 100}, cut.PinSpec{}); err == nil {
+		t.Error("expected an error for a zero-width bed")
+	}
+}
+
+func TestAutoSplitWithNoModelOpen(t *testing.T) {
+	app := NewApp()
+	if _, err := app.AutoSplit(cut.Bed{X: 220, Y: 220, Z: 250}, cut.PinSpec{}); err == nil {
+		t.Error("expected an error when no model is open")
+	}
+}
