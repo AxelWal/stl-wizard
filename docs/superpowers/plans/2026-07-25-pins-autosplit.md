@@ -2875,3 +2875,15 @@ Carried forward because they cost real time to learn:
 - **`meshcheck.Check` is the load-bearing invariant.** Cutting and capping produce zero-area slivers, so its `Degenerate` counter is not a formality.
 - **The frontend has no bundler.** Every relative import needs its `.js`; every bare specifier needs an import-map entry. Both classes blank the window while the Go build stays green, which is why `frontend_test.go` exists.
 - **A test that passes against the broken behaviour proves nothing.** Every fix in Plans 1 and 2 was verified by deliberately reintroducing the bug and watching the test fail. Several tests that looked fine turned out not to discriminate at all.
+
+---
+
+## Post-Implementation Corrections
+
+Defects in this plan's own code, found during execution. The committed code and
+its tests are the artifact of record.
+
+| Task | Finding | Resolution |
+|---|---|---|
+| 1 | `candidates()` clamped both ends of a ray into the same boundary cell for an origin far outside the grid, collapsing the search to one cell. A ray from `{-1000,8,0}` reported a miss where brute force found a hit at 994. The doc comment claimed it "never under-includes" — false. | Clip the ray to the grid's bounding box by the slab method before taking cells. `4fb45a8` |
+| 1 | `nearestHit` returned the Möller–Trumbore parameter rather than a distance whenever the caller's direction was not unit length, silently yielding numbers that are not millimetres. | Normalise once inside `nearestHit`; fix the test's brute-force reference to match. `4fb45a8` |
