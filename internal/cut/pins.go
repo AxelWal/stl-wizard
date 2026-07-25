@@ -363,6 +363,194 @@ func discAt(centre, normal, u, v geom.Vec3, r float64, segments int) []stl.Tri {
 	return out
 }
 
+// SkippedPin records a pin that could not be placed, and why. A skipped pin is
+// always reported: silently leaving one out would let a user print two pieces
+// that do not locate against each other.
+type SkippedPin struct {
+	// One tag each: a shared `json:"x"` across all three, which go vet rejects,
+	// would serialise the same field three times and lose Y and Z entirely.
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	Z        float64 `json:"z"`
+	Reason   string  `json:"reason"`
+	Measured float64 `json:"measured"`
+	Required float64 `json:"required"`
+}
+
+type PinResult struct {
+	Placed   int          `json:"placed"`
+	Skipped  []SkippedPin `json:"skipped"`
+	Warnings []string     `json:"warnings"`
+}
+
+// ApplyPins adds alignment pins to a finished cut, modifying both parts in place.
+//
+// It runs after the cut rather than during it because Split caps plane by plane:
+// the cut plane's cap is built before the rectangle's side planes trim it, so
+// pins planned mid-cut could sit in material those planes later remove. Only the
+// plane the user positioned is pinned — the rectangle's sides are structural,
+// not mating surfaces.
+//
+// Both parts stay closed solids: a pin is a hole punched in the cut face plus a
+// cylinder closing it, so no boolean operation is involved anywhere.
+func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
+	out := &PinResult{}
+	if !ps.Enabled {
+		return out, nil
+	}
+	ps = ps.withDefaults()
+	if err := ps.Validate(); err != nil {
+		return nil, err
+	}
+
+	cutPlane := s.Planes()[0]
+	eps := res.Part2.Epsilon()
+
+	// The peg extends out of the peg-bearing part, and the socket is bored the
+	// same way into the other one — so the peg exactly fills what the socket
+	// removes.
+	//
+	// The cut plane's normal points into part 2, so at the cut face part 2's
+	// material lies along +N and part 1's along -N. An outward normal points away
+	// from its own material: part 1's face looks along +N, part 2's along -N.
+	// triangulateFace and repaveFace both emit along +N, so it is part 2 — whether
+	// it carries the peg or the socket — whose re-paved face has to be flipped.
+	pegPart, socketPart := res.Part2, res.Part1
+	pegDir := cutPlane.N.Unit().Scale(-1)
+	pegFlip, socketFlip := true, false
+	if ps.PegOnPart == 1 {
+		pegPart, socketPart = res.Part1, res.Part2
+		pegDir = cutPlane.N.Unit()
+		pegFlip, socketFlip = false, true
+	}
+
+	idxPeg, groups, origin, u, v, ok := cutFace(pegPart, cutPlane, eps)
+	if !ok {
+		out.Warnings = append(out.Warnings,
+			"could not read the cut face, so no pins were placed")
+		return out, nil
+	}
+	// The two faces are the same region — part 1's is part 2's cap reversed — so
+	// the peg part's loops are used to re-pave both. That is not a shortcut: it is
+	// what guarantees the two re-paved faces share their boundary vertex for
+	// vertex, however each part's own loop assembly happened to order things.
+	idxSocket, _, _, _, _, okS := cutFace(socketPart, cutPlane, eps)
+	if !okS {
+		out.Warnings = append(out.Warnings,
+			"could not read the matching face on the other part, so no pins were placed")
+		return out, nil
+	}
+
+	// pinCylinder's cavity flag assumes a basis right-handed about the direction
+	// the pin runs: it winds its wall from u x v, so with dir opposed to u x v the
+	// flag would mean the opposite of what it says. planeBasis gives u x v == +N,
+	// so a pin running along -N gets a mirrored basis. That also lines each ring
+	// vertex up with circleLoop's, whose angles run the other way for the same
+	// reason, so the cylinder meets the hole vertex for vertex.
+	pu, pv := u, v
+	if pegDir.Dot(u.Cross(v)) < 0 {
+		pv = v.Scale(-1)
+	}
+
+	socketGrid := newRayGrid(socketPart)
+	r := ps.Diameter / 2
+	socketR := r + ps.Clearance
+	socketDepth := ps.Length + ps.Clearance
+	axialNeed := socketDepth + ps.MinWall
+
+	// Circles to punch into each part's face, and the cylinders to close them.
+	pegHoles := map[int][]faceLoop{}
+	socketHoles := map[int][]faceLoop{}
+	var pegTris, socketTris []stl.Tri
+
+	for gi, g := range groups {
+		positions := placePins(g, ps)
+		if len(positions) == 0 {
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"no room for a %gmm pin on one cut face: it needs %gmm of clearance from every edge",
+				ps.Diameter, ps.lateralNeed()))
+			continue
+		}
+
+		for _, p := range positions {
+			centre3 := origin.Add(u.Scale(p.X)).Add(v.Scale(p.Y))
+
+			have := axialClearance(socketGrid, centre3, pegDir, socketR, u, v, eps)
+			if have < axialNeed {
+				out.Skipped = append(out.Skipped, SkippedPin{
+					X: centre3[0], Y: centre3[1], Z: centre3[2],
+					Reason:   "not enough material behind the face for the socket",
+					Measured: have, Required: axialNeed,
+				})
+				continue
+			}
+
+			pegHoles[gi] = append(pegHoles[gi], circleLoop(p, r, pinSegments, origin, u, v))
+			socketHoles[gi] = append(socketHoles[gi], circleLoop(p, socketR, pinSegments, origin, u, v))
+
+			// Each cylinder is closed at its far end by pinCylinder's own disc and
+			// at the face by the hole it stands in, so neither needs a further cap.
+			pegTris = append(pegTris, pinCylinder(centre3, pegDir, pu, pv, r, ps.Length, pinSegments, false)...)
+			socketTris = append(socketTris, pinCylinder(centre3, pegDir, pu, pv, socketR, socketDepth, pinSegments, true)...)
+
+			out.Placed++
+		}
+	}
+
+	if out.Placed == 0 {
+		return out, nil
+	}
+
+	if err := repaveFace(pegPart, idxPeg, groups, pegHoles, pegFlip); err != nil {
+		return nil, err
+	}
+	if err := repaveFace(socketPart, idxSocket, groups, socketHoles, socketFlip); err != nil {
+		return nil, err
+	}
+
+	pegPart.Tris = append(pegPart.Tris, pegTris...)
+	socketPart.Tris = append(socketPart.Tris, socketTris...)
+	return out, nil
+}
+
+// repaveFace replaces a part's cut-face triangles with a fresh triangulation that
+// has the pin circles as extra holes.
+//
+// flip is set for the part whose face looks the other way, so both parts keep
+// their own outward orientation.
+func repaveFace(part *stl.Mesh, idx []int, groups []faceGroup, holes map[int][]faceLoop, flip bool) error {
+	drop := make(map[int]bool, len(idx))
+	for _, i := range idx {
+		drop[i] = true
+	}
+	keep := make([]stl.Tri, 0, len(part.Tris))
+	for i, t := range part.Tris {
+		if !drop[i] {
+			keep = append(keep, t)
+		}
+	}
+
+	for gi, g := range groups {
+		merged := bridgeHoles(g.Outer, append(append([]faceLoop{}, g.Holes...), holes[gi]...))
+		tris, ok := earClip(merged)
+		if !ok {
+			return fmt.Errorf("could not re-triangulate a cut face around its pins")
+		}
+		for _, tr := range tris {
+			t := stl.Tri{A: merged[tr[0]].P3, B: merged[tr[1]].P3, C: merged[tr[2]].P3}
+			// earClip emits faces along +p.N; each part needs its own outward
+			// direction.
+			if flip {
+				t = t.Reversed()
+			}
+			keep = append(keep, t)
+		}
+	}
+
+	part.Tris = keep
+	return nil
+}
+
 func loopBounds(l faceLoop) (lo, hi pt2) {
 	lo = pt2{X: math.Inf(1), Y: math.Inf(1)}
 	hi = pt2{X: math.Inf(-1), Y: math.Inf(-1)}

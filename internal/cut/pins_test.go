@@ -360,4 +360,172 @@ func TestPinCylinderCavityHasNegativeVolume(t *testing.T) {
 	if got := m.Volume(); math.Abs(got-want)/math.Abs(want) > 0.01 {
 		t.Errorf("cavity volume = %v, want about %v", got, want)
 	}
+	// Volume alone would pass with a compensating pair of winding errors, which
+	// is exactly the defect that makes a part unprintable.
+	if rep := meshcheck.Check(m, 1e-9); !rep.OK() {
+		t.Errorf("a capped cavity should still be a closed solid: %s", rep)
+	}
+}
+
+// The two tests above pin 64 segments, but production uses pinSegments. Exercise
+// the constant itself, so lowering it past the point where a pin stops being
+// round enough is caught here rather than on a printer.
+func TestPinCylinderVolumeAtTheProductionTessellation(t *testing.T) {
+	tris := pinCylinder(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, 1},
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, 5, pinSegments, false)
+	base := discAt(geom.Vec3{0, 0, 0}, geom.Vec3{0, 0, -1}, geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, 2, pinSegments)
+	m := &stl.Mesh{Tris: append(append([]stl.Tri{}, tris...), base...)}
+
+	want := math.Pi * 4 * 5
+	if got := m.Volume(); math.Abs(got-want)/want > 0.01 {
+		t.Errorf("peg volume at %d segments = %v, want about %v", pinSegments, got, want)
+	}
+	if rep := meshcheck.Check(m, 1e-9); !rep.OK() {
+		t.Errorf("a capped peg at %d segments should be a closed solid: %s", pinSegments, rep)
+	}
+}
+
+func cutCube(t *testing.T) (*Result, Spec, float64) {
+	t.Helper()
+	m := fixtures.Cube(40)
+	s := SpecFromNormal(geom.Vec3{20, 20, 20}, geom.Vec3{0, 0, 1}, 200, 200)
+	res, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+	return res, s, m.Epsilon()
+}
+
+func TestApplyPinsAddsMaterialToOnePartAndRemovesItFromTheOther(t *testing.T) {
+	res, s, _ := cutCube(t)
+	before1, before2 := res.Part1.Volume(), res.Part2.Volume()
+
+	ps := PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6}.withDefaults()
+	out, err := ApplyPins(res, s, ps)
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed == 0 {
+		t.Fatalf("no pins placed on a 40mm face; skipped: %+v", out.Skipped)
+	}
+
+	// Pegs go on part 2 by default, sockets on part 1.
+	if res.Part2.Volume() <= before2 {
+		t.Errorf("part 2 volume %v did not grow from %v — pegs add material",
+			res.Part2.Volume(), before2)
+	}
+	if res.Part1.Volume() >= before1 {
+		t.Errorf("part 1 volume %v did not shrink from %v — sockets remove material",
+			res.Part1.Volume(), before1)
+	}
+
+	// Roughly the right amount: N pegs of the given size.
+	wantAdded := float64(out.Placed) * math.Pi * 4 * 6
+	if got := res.Part2.Volume() - before2; math.Abs(got-wantAdded)/wantAdded > 0.05 {
+		t.Errorf("part 2 grew by %v, want about %v", got, wantAdded)
+	}
+}
+
+// This is the property that makes pins usable: both parts must still be closed
+// solids afterwards, or neither will print.
+func TestApplyPinsLeavesBothPartsWatertight(t *testing.T) {
+	res, s, eps := cutCube(t)
+
+	ps := PinSpec{Enabled: true, Count: 3, Diameter: 5, Length: 6}.withDefaults()
+	if _, err := ApplyPins(res, s, ps); err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+
+	if rep := meshcheck.Check(res.Part1, eps); !rep.OK() {
+		t.Errorf("part 1 after pinning: %s", rep)
+	}
+	if rep := meshcheck.Check(res.Part2, eps); !rep.OK() {
+		t.Errorf("part 2 after pinning: %s", rep)
+	}
+}
+
+func TestApplyPinsRespectsThePegSide(t *testing.T) {
+	res, s, _ := cutCube(t)
+	before1 := res.Part1.Volume()
+
+	ps := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 6, PegOnPart: 1}.withDefaults()
+	if _, err := ApplyPins(res, s, ps); err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if res.Part1.Volume() <= before1 {
+		t.Error("with PegOnPart 1, part 1 should gain material")
+	}
+}
+
+// The 1mm wall guard, laterally. A face barely wider than the pin has no room.
+func TestApplyPinsSkipsWhenTheFaceIsTooNarrow(t *testing.T) {
+	m := fixtures.Cube(10)
+	// A 5x5 rectangle: a 4mm pin needs 4/2 + 0.15 + 1 = 3.15mm from every edge,
+	// which a 5mm-wide face cannot give.
+	s := SpecFromNormal(geom.Vec3{5, 5, 5}, geom.Vec3{0, 0, 1}, 5, 5)
+	res, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+
+	ps := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 3}.withDefaults()
+	out, err := ApplyPins(res, s, ps)
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed != 0 {
+		t.Errorf("placed %d pins on a face with no room", out.Placed)
+	}
+	if len(out.Warnings) == 0 {
+		t.Error("a face with no room must be reported, not silently left bare")
+	}
+}
+
+// The 1mm wall guard, axially. A thin shell has nothing behind the face.
+func TestApplyPinsSkipsWhenThereIsNoMaterialBehind(t *testing.T) {
+	// A hollow box with 1.5mm walls: a 6mm-deep socket cannot fit behind the face.
+	m := fixtures.HollowBox(geom.Vec3{40, 40, 40}, 1.5)
+	s := SpecFromNormal(geom.Vec3{20, 20, 20}, geom.Vec3{0, 0, 1}, 200, 200)
+	res, err := Split(m, s)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+
+	ps := PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6}.withDefaults()
+	out, err := ApplyPins(res, s, ps)
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed != 0 {
+		t.Errorf("placed %d pins into a 1.5mm shell; a 6mm socket cannot fit", out.Placed)
+	}
+	for _, sk := range out.Skipped {
+		if sk.Measured >= sk.Required {
+			t.Errorf("skipped pin reports measured %v >= required %v, which is not a reason to skip",
+				sk.Measured, sk.Required)
+		}
+	}
+}
+
+func TestApplyPinsIsANoOpWhenDisabled(t *testing.T) {
+	res, s, _ := cutCube(t)
+	before1, before2 := res.Part1.Volume(), res.Part2.Volume()
+
+	out, err := ApplyPins(res, s, PinSpec{Enabled: false})
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed != 0 {
+		t.Errorf("placed %d pins while disabled", out.Placed)
+	}
+	if res.Part1.Volume() != before1 || res.Part2.Volume() != before2 {
+		t.Error("a disabled pin spec must not change the geometry")
+	}
+}
+
+func TestApplyPinsRejectsAnInvalidSpec(t *testing.T) {
+	res, s, _ := cutCube(t)
+	if _, err := ApplyPins(res, s, PinSpec{Enabled: true, Count: 1, Diameter: -4, Length: 6}); err == nil {
+		t.Error("expected an error for a negative diameter")
+	}
 }
