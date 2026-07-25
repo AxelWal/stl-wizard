@@ -29,6 +29,34 @@ func TestPinSpecDefaults(t *testing.T) {
 	}
 }
 
+// Zero doubles as "unset" for these two fields, so an explicit zero becomes the
+// default. That is a real limitation of the representation, not an accident —
+// pin it down so a change to it is deliberate.
+func TestPinSpecTreatsAnExplicitZeroAsUnset(t *testing.T) {
+	got := PinSpec{Enabled: true, Count: 1, Diameter: 4, Length: 8, Clearance: 0, MinWall: 0}.withDefaults()
+	if got.Clearance != 0.15 {
+		t.Errorf("Clearance = %v, want the 0.15 default", got.Clearance)
+	}
+	if got.MinWall != 1.0 {
+		t.Errorf("MinWall = %v, want the 1.0 default", got.MinWall)
+	}
+
+	// A small positive value is how a caller asks for effectively no clearance.
+	tiny := PinSpec{Enabled: true, Count: 1, Diameter: 4, Length: 8, Clearance: 1e-9, MinWall: 1e-9}.withDefaults()
+	if tiny.Clearance != 1e-9 || tiny.MinWall != 1e-9 {
+		t.Errorf("a small positive value was overwritten: %+v", tiny)
+	}
+}
+
+// Applying defaults twice must not change anything.
+func TestPinSpecDefaultsAreIdempotent(t *testing.T) {
+	once := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 8}.withDefaults()
+	twice := once.withDefaults()
+	if once != twice {
+		t.Errorf("withDefaults is not idempotent: %+v then %+v", once, twice)
+	}
+}
+
 func TestPinSpecValidate(t *testing.T) {
 	good := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 8}.withDefaults()
 	if err := good.Validate(); err != nil {
@@ -132,6 +160,48 @@ func TestPlacePinsRefusesAFaceWithNoRoom(t *testing.T) {
 
 	if pins := placePins(g, ps); len(pins) != 0 {
 		t.Errorf("got %d pins on a face with no room, want 0", len(pins))
+	}
+}
+
+// A face with real but modest room must yield a pin. A single grid pass at
+// step = need/2 can miss a viable spot by up to step/sqrt(2), and this sweep
+// lands squarely in that band: at half = 3.6 the centre has 0.45mm of slack and
+// the old single-pass search returned nothing.
+func TestPlacePinsFindsRoomThatASingleGridPassMisses(t *testing.T) {
+	ps := PinSpec{Enabled: true, Count: 1, Diameter: 4, Length: 8}.withDefaults()
+	need := ps.lateralNeed()
+
+	for _, half := range []float64{3.4, 3.6, 3.9, 4.2} {
+		g := squareFace(half)
+		if distanceToBoundary(pt2{0, 0}, g) < need {
+			continue // this face genuinely has no room; not a case for this test
+		}
+		pins := placePins(g, ps)
+		if len(pins) == 0 {
+			t.Errorf("half = %v: the centre has %v of clearance (need %v) but no pin was placed",
+				half, distanceToBoundary(pt2{0, 0}, g), need)
+		}
+	}
+}
+
+// Sockets must not intersect each other any more than they may break out through
+// the face's edge.
+func TestPlacePinsKeepsSocketsApart(t *testing.T) {
+	g := squareFace(20)
+	ps := PinSpec{Enabled: true, Count: 6, Diameter: 4, Length: 8}.withDefaults()
+
+	pins := placePins(g, ps)
+	if len(pins) < 2 {
+		t.Fatalf("got %d pins, want several", len(pins))
+	}
+	need := ps.pinSeparation()
+	for i := range pins {
+		for j := i + 1; j < len(pins); j++ {
+			d := math.Hypot(pins[i].X-pins[j].X, pins[i].Y-pins[j].Y)
+			if d < need {
+				t.Errorf("pins %d and %d are %v apart, need %v", i, j, d, need)
+			}
+		}
 	}
 }
 

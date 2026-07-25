@@ -25,6 +25,13 @@ type PinSpec struct {
 	PegOnPart int `json:"pegOnPart"`
 }
 
+// withDefaults fills in the values the UI leaves out.
+//
+// Zero means "unset" for Clearance and MinWall, so an explicit zero cannot be
+// distinguished from an absent one and becomes the default. A press fit or a
+// disabled wall guard therefore has to be asked for with a small positive value
+// rather than exactly zero. The UI always sends explicit values, so this only
+// affects Go callers constructing a PinSpec by hand.
 func (ps PinSpec) withDefaults() PinSpec {
 	if ps.Clearance == 0 {
 		ps.Clearance = 0.15
@@ -79,6 +86,13 @@ func (ps PinSpec) Validate() error {
 // it.
 func (ps PinSpec) lateralNeed() float64 {
 	return ps.Diameter/2 + ps.Clearance + ps.MinWall
+}
+
+// pinSeparation is how far apart two pin centres must be. Two sockets each of
+// radius Diameter/2 + Clearance would otherwise be free to intersect, and the
+// same wall that must survive at the face's edge should survive between them.
+func (ps PinSpec) pinSeparation() float64 {
+	return ps.Diameter + 2*ps.Clearance + ps.MinWall
 }
 
 // distanceToBoundary returns how far p is from the nearest edge of the face,
@@ -142,20 +156,16 @@ func placePins(g faceGroup, ps PinSpec) []pt2 {
 	ps = ps.withDefaults()
 	need := ps.lateralNeed()
 
-	lo, hi := loopBounds(g.Outer)
-	// Sample fine enough that a viable spot cannot hide between samples.
-	step := need / 2
-	if step <= 0 {
-		return nil
-	}
-
+	// A single grid can miss a viable spot between its samples — the worst case
+	// is step/sqrt(2). Rather than claim a step is fine enough, retry finer:
+	// each pass quarters the area a spot could hide in, and a face with real room
+	// yields one within a couple of passes. Only a face with genuinely no room
+	// survives all of them.
 	var candidates []pt2
-	for x := lo.X; x <= hi.X; x += step {
-		for y := lo.Y; y <= hi.Y; y += step {
-			c := pt2{X: x, Y: y}
-			if distanceToBoundary(c, g) >= need {
-				candidates = append(candidates, c)
-			}
+	for step := need / 2; step >= need/32; step /= 2 {
+		candidates = sampleCandidates(g, need, step)
+		if len(candidates) > 0 {
+			break
 		}
 	}
 	if len(candidates) == 0 {
@@ -179,12 +189,29 @@ func placePins(g faceGroup, ps PinSpec) []pt2 {
 			}
 		}
 		// Nothing left that is meaningfully apart from what we already have.
-		if bestDist < ps.Diameter+ps.Clearance {
+		if bestDist < ps.pinSeparation() {
 			break
 		}
 		chosen = append(chosen, best)
 	}
 	return chosen
+}
+
+func sampleCandidates(g faceGroup, need, step float64) []pt2 {
+	if step <= 0 {
+		return nil
+	}
+	lo, hi := loopBounds(g.Outer)
+	var out []pt2
+	for x := lo.X; x <= hi.X; x += step {
+		for y := lo.Y; y <= hi.Y; y += step {
+			c := pt2{X: x, Y: y}
+			if distanceToBoundary(c, g) >= need {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
 }
 
 func deepest(candidates []pt2, g faceGroup) pt2 {
