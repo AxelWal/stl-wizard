@@ -47,7 +47,11 @@ func newPartHandler(s *Session) http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "model/stl")
-		w.Header().Set("Cache-Control", "no-store") // a part id is reused after undo
+		// A given id always names the same geometry — ids are unique per tree and
+		// undo restores the very same mesh. What changes is whether the id resolves
+		// at all: a part flips between 200 and 404 as it is split and un-split, and
+		// caching either answer would go stale across that transition.
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(buf.Bytes())
 	})
 }
