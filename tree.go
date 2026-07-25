@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
 	"stl-cutter/internal/stl"
 )
+
+var globalIDLock sync.Mutex
+var globalNextID int
 
 // Part is one node of the cut tree. Only leaves carry a mesh: a part that has
 // been split is just a grouping, and holding its mesh would multiply memory for
@@ -38,7 +42,6 @@ type Tree struct {
 	SelectedID string `json:"selectedId"`
 
 	history []undoStep
-	nextID  int
 }
 
 func (t *Tree) CanUndo() bool { return len(t.history) > 0 }
@@ -47,11 +50,15 @@ func (t *Tree) CanUndo() bool { return len(t.history) > 0 }
 // which is where the frontend's view of the tree is assembled.
 
 func (t *Tree) newPart(name string, m *stl.Mesh, watertight bool) *Part {
-	t.nextID++
+	globalIDLock.Lock()
+	globalNextID++
+	id := globalNextID
+	globalIDLock.Unlock()
+
 	b := m.BBox()
 	size := b.Size()
 	return &Part{
-		ID:         fmt.Sprintf("p%d", t.nextID),
+		ID:         fmt.Sprintf("p%d", id),
 		Name:       name,
 		Tris:       len(m.Tris),
 		Volume:     m.Volume(),
