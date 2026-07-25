@@ -126,7 +126,7 @@ cutBtn.addEventListener("click", async () => {
   clearMessages();
   busy(true);
   try {
-    const outcome = await Cut(currentTree.selectedId, planeInput());
+    const outcome = await Cut(currentTree.selectedId, planeInput(), { enabled: false });
     await render(outcome.tree);
 
     // Warnings are shown whether or not the cut succeeded. A part that is not a

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"stl-cutter/internal/cut"
 	"stl-cutter/internal/fixtures"
+	"stl-cutter/internal/geom"
 	"stl-cutter/internal/stl"
 )
 
@@ -95,7 +97,7 @@ func TestCutSplitsTheSelectedPart(t *testing.T) {
 		Normal: [3]float64{0, 0, 1},
 		Width:  100,
 		Height: 100,
-	})
+	}, cut.PinSpec{})
 	if err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
@@ -134,7 +136,7 @@ func TestCutBoundedToOneArmOfTheU(t *testing.T) {
 		Normal: [3]float64{0, 1, 0},
 		Width:  15,
 		Height: 20,
-	})
+	}, cut.PinSpec{})
 	if err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestCutRejectsAnUnknownPart(t *testing.T) {
 	}
 	_, err := app.Cut("nope", PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	})
+	}, cut.PinSpec{})
 	if err == nil {
 		t.Error("expected an error for an unknown part id")
 	}
@@ -181,7 +183,7 @@ func TestCutRejectsAPlaneThatMissesTheModel(t *testing.T) {
 
 	_, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 500}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	})
+	}, cut.PinSpec{})
 	if err == nil {
 		t.Error("expected an error when the cutter encloses nothing")
 	}
@@ -198,7 +200,7 @@ func TestCutRejectsANonFinitePlane(t *testing.T) {
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1},
 		Width:  math.NaN(),
 		Height: 100,
-	})
+	}, cut.PinSpec{})
 	if err == nil {
 		t.Error("expected an error for a non-finite extent")
 	}
@@ -217,10 +219,10 @@ func TestCutRefusesAPartThatWasAlreadySplit(t *testing.T) {
 	plane := PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
 	}
-	if _, err := app.Cut(id, plane); err != nil {
+	if _, err := app.Cut(id, plane, cut.PinSpec{}); err != nil {
 		t.Fatalf("first Cut: %v", err)
 	}
-	if _, err := app.Cut(id, plane); err == nil {
+	if _, err := app.Cut(id, plane, cut.PinSpec{}); err == nil {
 		t.Error("expected an error cutting a part that has already been split")
 	}
 }
@@ -229,7 +231,7 @@ func TestCutWithNoModelOpen(t *testing.T) {
 	app := NewApp()
 	_, err := app.Cut("p1", PlaneInput{
 		Origin: [3]float64{0, 0, 0}, Normal: [3]float64{0, 0, 1}, Width: 10, Height: 10,
-	})
+	}, cut.PinSpec{})
 	if err == nil {
 		t.Error("expected an error when no model is open")
 	}
@@ -247,7 +249,7 @@ func TestViewReturnsADeepCopy(t *testing.T) {
 	before := app.view()
 	if _, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	}); err != nil {
+	}, cut.PinSpec{}); err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
 
@@ -269,7 +271,7 @@ func TestUndoRestoresThePreviousState(t *testing.T) {
 	id := app.session.Tree().Root.ID
 	if _, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	}); err != nil {
+	}, cut.PinSpec{}); err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
 
@@ -318,7 +320,7 @@ func TestSelectChangesTheSelection(t *testing.T) {
 	id := app.session.Tree().Root.ID
 	out, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	})
+	}, cut.PinSpec{})
 	if err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
@@ -343,7 +345,7 @@ func TestSelectRefusesASplitPart(t *testing.T) {
 	id := app.session.Tree().Root.ID
 	if _, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	}); err != nil {
+	}, cut.PinSpec{}); err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
 
@@ -370,7 +372,7 @@ func TestExportToWritesEveryLeaf(t *testing.T) {
 	id := app.session.Tree().Root.ID
 	if _, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	}); err != nil {
+	}, cut.PinSpec{}); err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
 
@@ -466,7 +468,7 @@ func TestExportToReturnsWhatItWroteWhenAWriteFails(t *testing.T) {
 	id := app.session.Tree().Root.ID
 	if _, err := app.Cut(id, PlaneInput{
 		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
-	}); err != nil {
+	}, cut.PinSpec{}); err != nil {
 		t.Fatalf("Cut: %v", err)
 	}
 
@@ -493,5 +495,104 @@ func TestExportToReturnsWhatItWroteWhenAWriteFails(t *testing.T) {
 	}
 	if len(out.Files) != 1 {
 		t.Errorf("Files = %v, want the one file that was written before the failure", out.Files)
+	}
+}
+
+func TestCutWithPinsAddsThemToBothParts(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{20, 20, 20}, Normal: [3]float64{0, 0, 1}, Width: 200, Height: 200,
+	}, cut.PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	if out.PinsPlaced == 0 {
+		t.Fatalf("no pins placed on a 40mm face; skipped: %+v", out.PinsSkipped)
+	}
+	if !out.Watertight {
+		t.Errorf("pinned parts should still be closed solids; warnings: %v", out.Warnings)
+	}
+}
+
+// Pins change the geometry, so the tree's recorded measurements must reflect the
+// pinned parts, not the bare ones.
+func TestCutWithPinsRecordsThePinnedVolumes(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	bare, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{20, 20, 20}, Normal: [3]float64{0, 0, 1}, Width: 200, Height: 200,
+	}, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("bare Cut: %v", err)
+	}
+	bareVolume := bare.Tree.Root.Children[1].Volume
+
+	if _, err := app.Undo(); err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+
+	pinned, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{20, 20, 20}, Normal: [3]float64{0, 0, 1}, Width: 200, Height: 200,
+	}, cut.PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6})
+	if err != nil {
+		t.Fatalf("pinned Cut: %v", err)
+	}
+	if got := pinned.Tree.Root.Children[1].Volume; got <= bareVolume {
+		t.Errorf("pinned part volume %v is not greater than the bare %v; the tree recorded the wrong mesh",
+			got, bareVolume)
+	}
+}
+
+func TestCutWithPinsReportsSkips(t *testing.T) {
+	app := NewApp()
+	// A thin shell has no material behind the cut face for a socket.
+	if _, err := app.loadPath(writeFixture(t, "shell.stl", fixtures.HollowBox(geom.Vec3{40, 40, 40}, 1.5))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{20, 20, 20}, Normal: [3]float64{0, 0, 1}, Width: 200, Height: 200,
+	}, cut.PinSpec{Enabled: true, Count: 4, Diameter: 4, Length: 6})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	if out.PinsPlaced != 0 {
+		t.Errorf("placed %d pins into a 1.5mm shell", out.PinsPlaced)
+	}
+	if len(out.PinsSkipped) == 0 && len(out.Warnings) == 0 {
+		t.Error("skipped pins must be reported, not silently dropped")
+	}
+}
+
+func TestCutWithoutPinsIsUnchanged(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	if out.PinsPlaced != 0 {
+		t.Errorf("placed %d pins with pinning disabled", out.PinsPlaced)
+	}
+	for _, c := range out.Tree.Root.Children {
+		if c.Volume < 499 || c.Volume > 501 {
+			t.Errorf("child volume = %v, want about 500 — an unpinned cut must be unchanged", c.Volume)
+		}
 	}
 }

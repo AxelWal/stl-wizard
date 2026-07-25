@@ -1,3 +1,54 @@
+export namespace cut {
+	
+	export class PinSpec {
+	    enabled: boolean;
+	    count: number;
+	    diameter: number;
+	    length: number;
+	    clearance: number;
+	    minWall: number;
+	    pegOnPart: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PinSpec(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.count = source["count"];
+	        this.diameter = source["diameter"];
+	        this.length = source["length"];
+	        this.clearance = source["clearance"];
+	        this.minWall = source["minWall"];
+	        this.pegOnPart = source["pegOnPart"];
+	    }
+	}
+	export class SkippedPin {
+	    x: number;
+	    y: number;
+	    z: number;
+	    reason: string;
+	    measured: number;
+	    required: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new SkippedPin(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.z = source["z"];
+	        this.reason = source["reason"];
+	        this.measured = source["measured"];
+	        this.required = source["required"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class Part {
@@ -84,6 +135,8 @@ export namespace main {
 	    tree?: TreeView;
 	    watertight: boolean;
 	    warnings: string[];
+	    pinsPlaced: number;
+	    pinsSkipped: cut.SkippedPin[];
 	
 	    static createFrom(source: any = {}) {
 	        return new CutOutcome(source);
@@ -94,6 +147,8 @@ export namespace main {
 	        this.tree = this.convertValues(source["tree"], TreeView);
 	        this.watertight = source["watertight"];
 	        this.warnings = source["warnings"];
+	        this.pinsPlaced = source["pinsPlaced"];
+	        this.pinsSkipped = this.convertValues(source["pinsSkipped"], cut.SkippedPin);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

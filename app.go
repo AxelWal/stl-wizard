@@ -137,18 +137,21 @@ type PlaneInput struct {
 // CutOutcome is what the frontend needs after a cut: the new tree, and an honest
 // account of how well it went.
 type CutOutcome struct {
-	Tree       *TreeView `json:"tree"`
-	Watertight bool      `json:"watertight"`
-	Warnings   []string  `json:"warnings"`
+	Tree        *TreeView        `json:"tree"`
+	Watertight  bool             `json:"watertight"`
+	Warnings    []string         `json:"warnings"`
+	PinsPlaced  int              `json:"pinsPlaced"`
+	PinsSkipped []cut.SkippedPin `json:"pinsSkipped"`
 }
 
-// Cut splits the given part with a bounded plane.
+// Cut splits the given part with a bounded plane, then applies the given
+// alignment pins to the cut face.
 //
 // A part that comes back not watertight is still added to the tree, flagged,
 // and Warnings explains why. Hiding that would produce a model that looks right
 // on screen and fails to print, which is the one outcome this application must
 // never produce.
-func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
+func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, error) {
 	spec := cut.Spec{
 		Origin: geom.Vec3{p.Origin[0], p.Origin[1], p.Origin[2]},
 		Normal: geom.Vec3{p.Normal[0], p.Normal[1], p.Normal[2]},
@@ -169,6 +172,7 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 	defer a.emit("cut:done")
 
 	var res *cut.Result
+	var pinRes *cut.PinResult
 	err := a.session.WithTree(func(tr *Tree) error {
 		part := tr.Find(partID)
 		if part == nil {
@@ -185,6 +189,17 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 		if err != nil {
 			return err
 		}
+
+		// Pins must be applied before the parts go into the tree, or the tree
+		// would record the volumes and triangle counts of the bare parts.
+		// ApplyPins re-checks both parts with meshcheck and rewrites
+		// res.Part1Check/Part2Check itself, so res.Watertight() below already
+		// reflects the pinned geometry, not the bare cut.
+		pinRes, err = cut.ApplyPins(res, spec, pins)
+		if err != nil {
+			return err
+		}
+
 		_, _, err = tr.Split(partID, res.Part1, res.Part2,
 			res.Part1Check.OK(), res.Part2Check.OK())
 		return err
@@ -194,9 +209,11 @@ func (a *App) Cut(partID string, p PlaneInput) (*CutOutcome, error) {
 	}
 
 	return &CutOutcome{
-		Tree:       a.view(),
-		Watertight: res.Watertight(),
-		Warnings:   res.Warnings,
+		Tree:        a.view(),
+		Watertight:  res.Watertight(),
+		Warnings:    append(res.Warnings, pinRes.Warnings...),
+		PinsPlaced:  pinRes.Placed,
+		PinsSkipped: pinRes.Skipped,
 	}, nil
 }
 
