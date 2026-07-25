@@ -147,7 +147,9 @@ func max3(a, b, c int) int {
 	return a
 }
 
-// nearestHit returns the distance to the closest surface along dir.
+// nearestHit returns the distance to the closest surface along dir. dir need
+// not be a unit vector — the result is always a true distance in model units,
+// whatever scale the caller's direction happens to have.
 //
 // ponytail: this tests every triangle in every cell the ray's bounding box
 // touches, rather than walking the grid cell by cell in ray order. It is exact —
@@ -159,41 +161,45 @@ func (g *rayGrid) nearestHit(origin, dir geom.Vec3) (float64, bool) {
 		return 0, false
 	}
 
-	// dir is passed to rayTriangle unmodified: Möller–Trumbore's u/v are
-	// scale-invariant in exact arithmetic, but not bit-for-bit identical
-	// under floating point, so normalising here could flip a grazing hit
-	// that a caller testing with the same raw dir would still see. Only the
-	// candidate search — which just needs a well-scaled far point — uses a
-	// unit vector.
+	// Normalise once, so the result is a true distance in model units whatever
+	// scale the caller's direction happened to have. Möller–Trumbore returns a
+	// parameter along the direction it is given, so an unnormalised direction
+	// would silently yield a number that is not millimetres.
+	d := dir.Unit()
+
 	best := math.Inf(1)
 	found := false
 	seen := make(map[int32]bool)
 
-	for _, idx := range g.candidates(origin, dir.Unit()) {
+	for _, idx := range g.candidates(origin, d) {
 		if seen[idx] {
 			continue
 		}
 		seen[idx] = true
-		if dist, ok := rayTriangle(origin, dir, g.tris[idx]); ok && dist < best {
+		if dist, ok := rayTriangle(origin, d, g.tris[idx]); ok && dist < best {
 			best, found = dist, true
 		}
 	}
 	return best, found
 }
 
-// candidates returns the triangles worth testing: those in any cell the ray
-// passes through. A ray that starts outside the grid is clamped into it, which
-// can over-include but never under-includes.
+// candidates returns the triangles worth testing: those in any cell the ray's
+// path through the grid could touch.
+//
+// The ray is clipped to the grid's own bounding box before its cells are taken.
+// Without that, an origin far outside the grid clamps to a boundary cell and the
+// far end clamps to the same one, collapsing the search box to a single cell and
+// silently missing every cell the ray really passes through — a reported miss for
+// a ray that genuinely hits.
 func (g *rayGrid) candidates(origin, dir geom.Vec3) []int32 {
-	// The far end of the ray, taken as the grid's diagonal beyond the origin —
-	// far enough that anything the ray could hit lies within it.
-	var span float64
-	for i := 0; i < 3; i++ {
-		span += g.cell[i] * float64(g.dims[i])
+	t0, t1, ok := g.clipRay(origin, dir)
+	if !ok {
+		return nil // the ray never enters the grid
 	}
-	end := origin.Add(dir.Scale(span * 2))
 
-	a, b := g.cellOf(origin), g.cellOf(end)
+	a := g.cellOf(origin.Add(dir.Scale(t0)))
+	b := g.cellOf(origin.Add(dir.Scale(t1)))
+
 	var out []int32
 	for x := min2(a[0], b[0]); x <= max2(a[0], b[0]); x++ {
 		for y := min2(a[1], b[1]); y <= max2(a[1], b[1]); y++ {
@@ -203,6 +209,43 @@ func (g *rayGrid) candidates(origin, dir geom.Vec3) []int32 {
 		}
 	}
 	return out
+}
+
+// clipRay returns the parameter range over which the ray lies inside the grid's
+// bounding box, by the standard slab method. ok is false when the ray misses the
+// box entirely.
+func (g *rayGrid) clipRay(origin, dir geom.Vec3) (t0, t1 float64, ok bool) {
+	t0, t1 = 0, math.Inf(1)
+
+	for i := 0; i < 3; i++ {
+		lo := g.min[i]
+		hi := g.min[i] + g.cell[i]*float64(g.dims[i])
+
+		if math.Abs(dir[i]) < 1e-15 {
+			// Parallel to this slab: either inside it for the whole ray, or never.
+			if origin[i] < lo || origin[i] > hi {
+				return 0, 0, false
+			}
+			continue
+		}
+
+		inv := 1 / dir[i]
+		near := (lo - origin[i]) * inv
+		far := (hi - origin[i]) * inv
+		if near > far {
+			near, far = far, near
+		}
+		if near > t0 {
+			t0 = near
+		}
+		if far < t1 {
+			t1 = far
+		}
+		if t0 > t1 {
+			return 0, 0, false
+		}
+	}
+	return t0, t1, true
 }
 
 func min2(a, b int) int {

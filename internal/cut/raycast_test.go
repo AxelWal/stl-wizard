@@ -125,7 +125,7 @@ func TestRayGridAgreesWithBruteForce(t *testing.T) {
 			var wantDist float64 = math.Inf(1)
 			wantOK := false
 			for _, tri := range m.Tris {
-				if dist, ok := rayTriangle(o, d, tri); ok && dist < wantDist {
+				if dist, ok := rayTriangle(o, d.Unit(), tri); ok && dist < wantDist {
 					wantDist, wantOK = dist, true
 				}
 			}
@@ -138,5 +138,61 @@ func TestRayGridAgreesWithBruteForce(t *testing.T) {
 				t.Errorf("origin %v dir %v: grid %v, brute force %v", o, d, gotDist, wantDist)
 			}
 		}
+	}
+}
+
+// A ray starting far outside the grid must still find what it hits. The cell
+// search used to clamp both ends of the ray into the same boundary cell, so it
+// reported a miss for a ray that genuinely crosses the mesh.
+func TestRayGridHitsFromFarOutsideTheGrid(t *testing.T) {
+	m := fixtures.UVSphere(10, 24, 12)
+	g := newRayGrid(m)
+
+	for _, offset := range []float64{1e2, 1e3, 1e6, 1e9} {
+		origin := geom.Vec3{-offset, 8, 0}
+		dir := geom.Vec3{1, 0, 0}
+
+		gotDist, gotOK := g.nearestHit(origin, dir)
+
+		wantDist, wantOK := math.Inf(1), false
+		for _, tri := range m.Tris {
+			if dist, ok := rayTriangle(origin, dir.Unit(), tri); ok && dist < wantDist {
+				wantDist, wantOK = dist, true
+			}
+		}
+
+		if gotOK != wantOK {
+			t.Errorf("offset %g: grid ok=%v, brute force ok=%v", offset, gotOK, wantOK)
+			continue
+		}
+		if wantOK && math.Abs(gotDist-wantDist) > 1e-6 {
+			t.Errorf("offset %g: grid %v, brute force %v", offset, gotDist, wantDist)
+		}
+	}
+}
+
+// A ray that never enters the grid at all must report a miss, not a spurious hit.
+func TestRayGridMissesWhenTheRayNeverEntersTheGrid(t *testing.T) {
+	g := newRayGrid(fixtures.Cube(10))
+	if _, ok := g.nearestHit(geom.Vec3{-100, -100, -100}, geom.Vec3{0, 0, -1}); ok {
+		t.Error("expected a miss for a ray heading away from the grid")
+	}
+}
+
+// The result is a distance in model units, whatever the caller's direction scale.
+func TestRayGridResultIsIndependentOfDirectionScale(t *testing.T) {
+	g := newRayGrid(fixtures.Cube(10))
+	origin := geom.Vec3{5, 5, 5}
+
+	unit, ok1 := g.nearestHit(origin, geom.Vec3{0, 0, -1})
+	scaled, ok2 := g.nearestHit(origin, geom.Vec3{0, 0, -1000})
+	if !ok1 || !ok2 {
+		t.Fatal("expected both rays to hit the floor")
+	}
+	if math.Abs(unit-scaled) > 1e-9 {
+		t.Errorf("unit direction gave %v but a scaled one gave %v; the result must be a distance", unit, scaled)
+	}
+	if math.Abs(unit-5) > 1e-9 {
+		t.Errorf("distance = %v, want 5", unit)
 	}
 }
