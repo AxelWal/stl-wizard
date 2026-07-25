@@ -118,6 +118,7 @@ export namespace main {
 	    dir: string;
 	    files: string[];
 	    notWatertight: string[];
+	    cancelled: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ExportOutcome(source);
@@ -128,6 +129,7 @@ export namespace main {
 	        this.dir = source["dir"];
 	        this.files = source["files"];
 	        this.notWatertight = source["notWatertight"];
+	        this.cancelled = source["cancelled"];
 	    }
 	}
 	

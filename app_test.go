@@ -456,3 +456,42 @@ func TestExportWithNoModelOpen(t *testing.T) {
 		t.Error("expected an error when no model is open")
 	}
 }
+
+// A partial failure must still report what reached the disk.
+func TestExportToReturnsWhatItWroteWhenAWriteFails(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+	if _, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5}, Normal: [3]float64{0, 0, 1}, Width: 100, Height: 100,
+	}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	dir := t.TempDir()
+	// Make the second write fail by occupying its name with a directory.
+	base := "cube_"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	_ = entries
+	// The two leaves are named wholea and wholeb, so the second file is:
+	blocker := filepath.Join(dir, base+"wholeb.stl")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatalf("mkdir blocker: %v", err)
+	}
+
+	out, err := app.exportTo(dir)
+	if err == nil {
+		t.Fatal("expected an error when a file cannot be written")
+	}
+	if out == nil {
+		t.Fatal("a partial outcome must still be returned so the user knows what was written")
+	}
+	if len(out.Files) != 1 {
+		t.Errorf("Files = %v, want the one file that was written before the failure", out.Files)
+	}
+}

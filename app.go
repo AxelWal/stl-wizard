@@ -221,6 +221,9 @@ type ExportOutcome struct {
 	Dir           string   `json:"dir"`
 	Files         []string `json:"files"`
 	NotWatertight []string `json:"notWatertight"`
+	// Cancelled reports that the user dismissed the folder dialog. The frontend
+	// gets a real object either way, so it never has to guard against null.
+	Cancelled bool `json:"cancelled"`
 }
 
 // ExportAll writes every leaf part as a binary STL into a folder the user picks.
@@ -232,7 +235,7 @@ func (a *App) ExportAll() (*ExportOutcome, error) {
 		return nil, fmt.Errorf("could not open the folder dialog: %w", err)
 	}
 	if dir == "" {
-		return nil, nil // cancelled
+		return &ExportOutcome{Cancelled: true}, nil
 	}
 	return a.exportTo(dir)
 }
@@ -240,37 +243,48 @@ func (a *App) ExportAll() (*ExportOutcome, error) {
 // exportTo is ExportAll once a folder is known, split out so it can be tested
 // without a dialog.
 func (a *App) exportTo(dir string) (*ExportOutcome, error) {
-	out := &ExportOutcome{Dir: dir}
+	// What to write is decided under the lock; the writing itself happens after
+	// it is released. Holding the session mutex across the disk I/O would block
+	// Cut, Undo, Select and the viewer's redraw for the whole export. A Part's
+	// mesh is only ever replaced, never mutated in place, so a snapshotted
+	// pointer stays valid for as long as this needs it.
+	type pending struct {
+		name       string
+		mesh       *stl.Mesh
+		watertight bool
+	}
+	var todo []pending
 
 	err := a.session.WithTree(func(tr *Tree) error {
 		base := strings.TrimSuffix(tr.ModelName, filepath.Ext(tr.ModelName))
+		seen := make(map[string]bool)
 		for i, leaf := range tr.Leaves() {
 			name := fmt.Sprintf("%s_%s.stl", base, leaf.Name)
-			// Fall back to an index if a part name ever collides.
-			if contains(out.Files, name) {
+			// Leaf names are root-to-leaf a/b paths and so are already unique
+			// within a tree; this only guards against that changing.
+			if seen[name] {
 				name = fmt.Sprintf("%s_part%d.stl", base, i+1)
 			}
-			if err := stl.WriteFile(filepath.Join(dir, name), leaf.Mesh); err != nil {
-				return err
-			}
-			out.Files = append(out.Files, name)
-			if !leaf.Watertight {
-				out.NotWatertight = append(out.NotWatertight, name)
-			}
+			seen[name] = true
+			todo = append(todo, pending{name: name, mesh: leaf.Mesh, watertight: leaf.Watertight})
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
-}
 
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
+	out := &ExportOutcome{Dir: dir}
+	for _, p := range todo {
+		if err := stl.WriteFile(filepath.Join(dir, p.name), p.mesh); err != nil {
+			// Return what did get written. Those files are on disk whatever
+			// happens next, and the user needs to know which ones.
+			return out, err
+		}
+		out.Files = append(out.Files, p.name)
+		if !p.watertight {
+			out.NotWatertight = append(out.NotWatertight, p.name)
 		}
 	}
-	return false
+	return out, nil
 }
