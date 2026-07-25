@@ -244,14 +244,7 @@ func TestAxialClearanceMeasuresMaterialBehindTheFace(t *testing.T) {
 
 	got := axialClearance(grid, geom.Vec3{5, 5, 5}, geom.Vec3{0, 0, -1}, 2,
 		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
-	// axialClearance starts its ray 4*eps inside the material (see its doc
-	// comment), so the measured distance is short of the true 5mm by that
-	// amount. For this fixture 4*eps ~= 6.9e-6mm, wider than the 1e-6 tolerance
-	// the task brief specified verbatim — that tolerance assumed the offset
-	// would always be sub-nanometre, which is not true at this mesh scale.
-	// Loosened to 1e-4mm: still four orders of magnitude tighter than the 5mm
-	// feature being measured, and comfortably wider than the built-in offset.
-	if math.Abs(got-5) > 1e-4 {
+	if math.Abs(got-5) > 1e-6 {
 		t.Errorf("clearance = %v, want 5", got)
 	}
 }
@@ -301,9 +294,7 @@ func TestAxialClearanceIgnoresTheFaceItStartsOn(t *testing.T) {
 
 	got := axialClearance(grid, geom.Vec3{5, 5, 0}, geom.Vec3{0, 0, 1}, 2,
 		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
-	// See the tolerance note in TestAxialClearanceMeasuresMaterialBehindTheFace:
-	// the 4*eps starting offset exceeds a 1e-6 tolerance at this mesh scale.
-	if math.Abs(got-10) > 1e-4 {
+	if math.Abs(got-10) > 1e-6 {
 		t.Errorf("clearance = %v, want 10 — the floor it starts on must not count", got)
 	}
 }

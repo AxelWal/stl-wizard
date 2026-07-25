@@ -229,16 +229,18 @@ func deepest(candidates []pt2, g faceGroup) pt2 {
 // axialClearance measures how much material lies behind a point, in the
 // direction a socket would be bored.
 //
-// The whole footprint is sampled — the centre plus a ring at the socket's radius
-// — because a socket is a cylinder and it breaks out if any part of it does.
-// The smallest of those measurements wins.
+// The footprint is sampled at nine points — the centre and eight on the boundary
+// circle — and the smallest measurement wins, because a socket is a cylinder and
+// it breaks out if any part of it does.
 //
-// The ray starts a hair inside the material so the face it is standing on does
-// not register as a zero-distance hit; that offset is on the order of the mesh's
-// own tolerance and is negligible against a millimetre wall.
+// ponytail: nine rays rather than a dense sweep. A far surface with a slot or
+// hole narrower than the gap between adjacent samples could slip through and
+// leave the clearance overestimated. Upgrade path if that ever shows up: sample
+// on a spiral scaled to the socket radius, or march the whole footprint.
 func axialClearance(grid *rayGrid, centre, dir geom.Vec3, radius float64, u, v geom.Vec3, eps float64) float64 {
 	d := dir.Unit()
-	start := centre.Add(d.Scale(eps * 4))
+	offset := eps * 4
+	start := centre.Add(d.Scale(offset))
 
 	worst := math.Inf(1)
 	samples := 8
@@ -251,6 +253,10 @@ func axialClearance(grid *rayGrid, centre, dir geom.Vec3, radius float64, u, v g
 			worst = 0
 			return
 		}
+		// The ray started a hair inside the material so the face it stands on
+		// would not register as a zero-distance hit. Add that back, so the result
+		// is measured from the face itself.
+		dist += offset
 		if dist < worst {
 			worst = dist
 		}
