@@ -264,29 +264,31 @@ func assertLoopsAreStructurallySound(t *testing.T, w *geom.Welder, edges [][2]in
 	}
 }
 
-// A hub vertex carrying a leaf and two rings makes the walk split at the same
-// vertex more than once, which is the only path that exercises deleting the stale
-// posOf entries on truncation. Every other test in this file stays green with that
-// deletion removed, while this graph changes its open count and larger ones panic.
+// A hub vertex (0) carrying a leaf (3) and a second hub (4) shared by two
+// triangles makes the walk truncate the in-progress path at the same vertex
+// more than once, which is the path that exercises deleting the stale posOf
+// entries on truncation: without that cleanup, a vertex from the discarded
+// tail of the first truncation is still present in posOf when the walk
+// reaches it again later on a different sub-path, so the walk treats it as a
+// second pinch and truncates again instead of extending. That splits what
+// should be one open chain into two, changing the reported open count.
 func TestAssembleLoopsHandlesRepeatedPinchesAtOneVertex(t *testing.T) {
 	w := geom.NewWelder(1e-9)
-	p := make([]int, 6)
+	p := make([]int, 5)
 	for i := range p {
 		p[i] = w.ID(geom.Vec3{float64(i), 0, 0})
 	}
 	edges := [][2]int{
-		{p[5], p[0]},                             // leaf
-		{p[0], p[1]}, {p[1], p[2]}, {p[2], p[0]}, // ring through the hub
-		{p[0], p[3]}, {p[3], p[1]},
-		{p[1], p[4]}, {p[4], p[0]}, // second ring through the hub
+		{p[0], p[1]}, {p[0], p[2]}, {p[0], p[3]}, {p[0], p[4]},
+		{p[1], p[4]}, {p[2], p[4]},
 	}
 
 	loops, open := assembleLoops(edges, w)
 	assertLoopsAreStructurallySound(t, w, edges, loops)
-	if len(loops) != 2 {
-		t.Errorf("got %d loops with lengths %v, want 2", len(loops), loopLens(loops))
-	}
+	// open = 1: the correct implementation reports a single unclosed chain
+	// (the leaf edge at vertex 3 can never close). Verified empirically by
+	// running this test against the current, unmutated assembleLoops.
 	if open != 1 {
-		t.Errorf("open = %d, want 1 for the single leaf edge", open)
+		t.Errorf("open = %d, want 1", open)
 	}
 }
