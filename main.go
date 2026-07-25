@@ -22,7 +22,8 @@ func main() {
 		MinHeight:        600,
 		BackgroundColour: &options.RGBA{R: 43, G: 43, B: 43, A: 255},
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  assets,
+			Handler: newPartHandler(app.session),
 		},
 		OnStartup: app.startup,
 		Bind:      []interface{}{app},

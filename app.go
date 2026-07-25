@@ -5,10 +5,11 @@ import "context"
 // App is the bound service. Every exported method on it is callable from the
 // frontend, and together they are the application's entire command API.
 type App struct {
-	ctx context.Context
+	ctx     context.Context
+	session *Session
 }
 
-func NewApp() *App { return &App{} }
+func NewApp() *App { return &App{session: &Session{}} }
 
 // startup stores the context Wails hands us. Every runtime call — dialogs,
 // events — needs it.
