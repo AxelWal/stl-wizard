@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-amd64
+          - os: macos-latest
+            name: macos-arm64
+            tags: ""
+          - os: windows-latest
+            name: windows-amd64
+            tags: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev
+          # GitHub's Ubuntu runners have carried libwebkit2gtk-4.0-dev
+          # historically and are moving to 4.1. Try the current name first
+          # and fall back to the old one, recording which build tag Wails
+          # needs to match whichever package actually landed.
+          if sudo apt-get install -y libwebkit2gtk-4.1-dev; then
+            echo "WAILS_WEBKIT_TAG=webkit2_41" >> "$GITHUB_ENV"
+          else
+            sudo apt-get install -y libwebkit2gtk-4.0-dev
+            echo "WAILS_WEBKIT_TAG=webkit2_40" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install the Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+
+      - name: Test
+        run: go test ./... -race
+
+      - name: Build
+        run: wails build -tags "${{ matrix.os == 'ubuntu-latest' && env.WAILS_WEBKIT_TAG || matrix.tags }}" -o stl-cutter-${{ matrix.name }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stl-cutter-${{ matrix.name }}
+          path: build/bin/*
