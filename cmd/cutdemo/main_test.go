@@ -58,6 +58,11 @@ func TestRunCutsAFileAndWritesBothParts(t *testing.T) {
 		}
 	}
 
+	// "not watertight: ..." contains "watertight", so the substring alone proves
+	// nothing about the verdict. Assert the failure text is absent as well.
+	if strings.Contains(log.String(), "not watertight") {
+		t.Errorf("a part came back not watertight:\n%s", log.String())
+	}
 	if !strings.Contains(log.String(), "watertight") {
 		t.Errorf("output did not report watertightness:\n%s", log.String())
 	}
@@ -78,5 +83,35 @@ func TestRunRequiresInputAndOutput(t *testing.T) {
 	}
 	if err := run([]string{"-in", "x.stl"}, &log); err == nil {
 		t.Error("expected an error when -out is missing")
+	}
+}
+
+func TestParseVec3RejectsNonFiniteValues(t *testing.T) {
+	for _, s := range []string{"1,2,NaN", "Inf,0,0", "1,-Inf,3", "1,2,+Inf"} {
+		if _, err := parseVec3(s); err == nil {
+			t.Errorf("parseVec3(%q): expected an error for a non-finite component", s)
+		}
+	}
+}
+
+// NaN slips past Spec.Validate's own guard, because NaN <= 0 is false. The
+// command must reject it before the geometry ever sees it.
+func TestRunRejectsNonFiniteExtents(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "cube.stl")
+	if err := stl.WriteFile(in, fixtures.Cube(10)); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	for _, bad := range []string{"NaN", "Inf", "0", "-5"} {
+		var log bytes.Buffer
+		err := run([]string{
+			"-in", in, "-out", filepath.Join(dir, "out"),
+			"-origin", "5,5,5", "-normal", "0,0,1",
+			"-width", bad, "-height", "100",
+		}, &log)
+		if err == nil {
+			t.Errorf("-width %s: expected an error", bad)
+		}
 	}
 }

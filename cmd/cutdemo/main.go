@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -31,6 +32,13 @@ func parseVec3(s string) (geom.Vec3, error) {
 		f, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
 		if err != nil {
 			return geom.Vec3{}, fmt.Errorf("component %d of %q is not a number", i+1, s)
+		}
+		// ParseFloat accepts "NaN" and "Inf". A non-finite coordinate defeats the
+		// geometry's own validation downstream: NaN <= 0 is false, so a NaN extent
+		// passes Spec.Validate, and NaN plane distances classify every point as
+		// lying on the plane.
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return geom.Vec3{}, fmt.Errorf("component %d of %q is not a finite number", i+1, s)
 		}
 		v[i] = f
 	}
@@ -65,6 +73,18 @@ func run(args []string, out io.Writer) error {
 	normal, err := parseVec3(*normalStr)
 	if err != nil {
 		return fmt.Errorf("-normal: %w", err)
+	}
+
+	for _, f := range []struct {
+		name  string
+		value float64
+	}{{"-width", *width}, {"-height", *height}} {
+		if math.IsNaN(f.value) || math.IsInf(f.value, 0) {
+			return fmt.Errorf("%s must be a finite number, got %v", f.name, f.value)
+		}
+		if f.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero, got %v", f.name, f.value)
+		}
 	}
 
 	mesh, err := stl.ReadFile(*inPath)
