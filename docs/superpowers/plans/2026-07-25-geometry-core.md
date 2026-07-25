@@ -1169,6 +1169,7 @@ import (
 	"testing"
 
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
 )
 
 func TestCubeVolumeAndTriangleCount(t *testing.T) {
@@ -1248,6 +1249,49 @@ func TestUShapeGeometryIsAsDocumented(t *testing.T) {
 func TestNonManifoldHasAHole(t *testing.T) {
 	if got := len(NonManifold().Tris); got != 11 {
 		t.Fatalf("got %d triangles, want 11 (a cube with one face triangle removed)", got)
+	}
+}
+
+// translate returns a copy of m shifted by off.
+func translate(m *stl.Mesh, off geom.Vec3) *stl.Mesh {
+	out := &stl.Mesh{Tris: make([]stl.Tri, len(m.Tris))}
+	for i, t := range m.Tris {
+		out.Tris[i] = stl.Tri{A: t.A.Add(off), B: t.B.Add(off), C: t.C.Add(off)}
+	}
+	return out
+}
+
+// Volume() is a signed sum taken about the origin, so a triangle whose plane
+// passes through the origin contributes exactly zero and its winding cannot be
+// seen by any assertion about volume. Every fixture here is built from the
+// origin, which leaves large parts of each one unchecked by the tests above —
+// for Tube it is the entire bottom annulus, 128 of its 512 triangles.
+//
+// Translating away from the origin makes every face contribute. For a closed,
+// consistently wound mesh the signed volume is translation-invariant, because the
+// area-weighted normals sum to zero; flip a single face and that sum is non-zero,
+// so the computed volume drifts with the offset. This is therefore the test that
+// actually pins down the winding of every triangle.
+func TestFixtureVolumesAreTranslationInvariant(t *testing.T) {
+	// Deliberately far from the model and on no axis, so no face stays coplanar
+	// with the origin.
+	off := geom.Vec3{123.5, -456.25, 789.125}
+
+	for name, m := range map[string]*stl.Mesh{
+		"cube":      Cube(10),
+		"box":       Box(geom.Vec3{-1, -2, -3}, geom.Vec3{1, 2, 3}),
+		"sphere":    UVSphere(5, 24, 12),
+		"tube":      Tube(4, 2, 8, 32),
+		"hollowbox": HollowBox(geom.Vec3{10, 10, 10}, 1),
+		"ushape":    UShape(10),
+	} {
+		before := m.Volume()
+		after := translate(m, off).Volume()
+		tol := math.Max(1e-9, math.Abs(before)*1e-9)
+		if math.Abs(after-before) > tol {
+			t.Errorf("%s: volume %v about the origin but %v after translation (drift %v) — a face is wound backwards",
+				name, before, after, after-before)
+		}
 	}
 }
 ```
@@ -1346,15 +1390,19 @@ func UVSphere(radius float64, segments, rings int) *stl.Mesh {
 			b := at(seg+1, ring)
 			c := at(seg+1, ring+1)
 			d := at(seg, ring+1)
+			// Every branch is reversed relative to the obvious parametrisation
+			// order. Increasing ring walks down from the +Z pole while increasing
+			// seg goes counter-clockwise seen from +Z, and that combination winds
+			// each face inward. Volume() is a signed sum, so it must be outward.
 			switch {
 			case ring == 0: // +Z pole: a and b coincide, emit one triangle
-				m.Tris = append(m.Tris, stl.Tri{A: a, B: c, C: d})
+				m.Tris = append(m.Tris, stl.Tri{A: d, B: c, C: a})
 			case ring == rings-1: // -Z pole: c and d coincide
-				m.Tris = append(m.Tris, stl.Tri{A: a, B: b, C: c})
+				m.Tris = append(m.Tris, stl.Tri{A: c, B: b, C: a})
 			default:
 				m.Tris = append(m.Tris,
-					stl.Tri{A: a, B: b, C: c},
-					stl.Tri{A: a, B: c, C: d},
+					stl.Tri{A: c, B: b, C: a},
+					stl.Tri{A: d, B: c, C: a},
 				)
 			}
 		}
@@ -1381,9 +1429,11 @@ func Tube(outerR, innerR, height float64, segments int) *stl.Mesh {
 		m.Tris = append(m.Tris, stl.Tri{A: o0, B: o1, C: o2}, stl.Tri{A: o0, B: o2, C: o3})
 		// Inner wall faces toward the axis, so its winding is the reverse.
 		m.Tris = append(m.Tris, stl.Tri{A: i0, B: i2, C: i1}, stl.Tri{A: i0, B: i3, C: i2})
-		// Bottom annulus faces -Z, top annulus faces +Z.
-		m.Tris = append(m.Tris, stl.Tri{A: o0, B: i1, C: i0}, stl.Tri{A: o0, B: o1, C: i1})
-		m.Tris = append(m.Tris, stl.Tri{A: o3, B: i3, C: i2}, stl.Tri{A: o3, B: i2, C: o2})
+		// Bottom annulus faces -Z, top annulus faces +Z. Both wind opposite to the
+		// obvious outer-to-inner vertex order, because with innerR < outerR the
+		// sweep from the outer ring to the inner one turns the other way.
+		m.Tris = append(m.Tris, stl.Tri{A: i0, B: i1, C: o0}, stl.Tri{A: i1, B: o1, C: o0})
+		m.Tris = append(m.Tris, stl.Tri{A: i2, B: i3, C: o3}, stl.Tri{A: o2, B: i2, C: o3})
 	}
 	return m
 }
