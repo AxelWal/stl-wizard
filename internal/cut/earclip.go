@@ -150,9 +150,9 @@ func visibleVertex(poly faceLoop, m pt2, avoid map[pt2]int, hole faceLoop) int {
 		}
 	}
 	// Nothing at all is joinable. Instrumentation over 20,000 real bridges never
-	// reached here; if it ever does, an arbitrary landing would silently produce a
-	// cap with the hole filled in, so the caller is told to leave the hole
-	// unspliced and let earClip report the failure.
+	// reached here; if it ever does, an arbitrary landing would silently corrupt
+	// the merged loop, so the caller is told to leave the hole unspliced instead.
+	// See bridgeHoles for what then reports the resulting defect.
 	return -1
 }
 
@@ -189,11 +189,22 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 		pi := visibleVertex(result, entry.P2, counts, h)
 		if pi < 0 {
 			// No landing is safe. Splicing on an arbitrary index would silently
-			// corrupt the merged loop, so the hole is left unspliced: any channel
-			// already in place then leaves the loop non-simple and earClip reports
-			// ok = false, which the caller surfaces. Unreachable in practice — no
-			// fuzzed configuration has produced it — so it is not worth an error
-			// return that every caller would have to thread through.
+			// corrupt the merged loop, so the hole is left unspliced and the cap
+			// comes out with that hole filled in — a solid region where a void
+			// belongs.
+			//
+			// That is caught, but not here and not always by earClip. If a channel
+			// is already in place the merged loop is non-simple and earClip does
+			// report ok = false. For the first hole processed it does not: the loop
+			// is then just the simple outer boundary, which triangulates perfectly
+			// well. What catches it in every case is meshcheck.Check on the finished
+			// parts — the unspliced hole's own boundary edges are still carried by
+			// the clipped surface and now have nothing to pair with, so the part is
+			// reported open and flagged.
+			//
+			// Unreachable in practice: instrumentation over 20,000 real bridges never
+			// got here. So it is not worth an error return that every caller would
+			// have to thread through, given the failure is reported anyway.
 			continue
 		}
 
@@ -210,10 +221,15 @@ func bridgeHoles(outer faceLoop, holes []faceLoop) faceLoop {
 }
 
 // earClip triangulates a simple counter-clockwise loop, returning index triples
-// into l. ok reports whether the triangulation is complete: a simple polygon of
-// n vertices must yield exactly n-2 triangles, and anything less means the
-// input was degenerate or self-intersecting. Callers surface that rather than
-// shipping a cap with a hole in it.
+// into l. ok reports that the returned triangles cover the whole loop, so the
+// cap they build has no hole in it. Callers surface ok = false rather than
+// shipping a cap with a hole.
+//
+// ok = true does not imply exactly n-2 triangles. That is the usual count for a
+// simple polygon, and the normal path still produces it, but a clip that stalls
+// on a remainder of negligible area fans the remainder instead — see below — and
+// a fan of k vertices is k-2 triangles however many corners were reflex. Only
+// the coverage claim is guaranteed.
 //
 // A failed triangulation returns no triangles at all. The partial fan a stalled
 // clip has accumulated covers only part of the region, and `tris, _ :=` is one
@@ -223,6 +239,10 @@ func earClip(l faceLoop) (tris [][3]int, ok bool) {
 	if n < 3 {
 		return nil, false
 	}
+
+	// Captured before clipping starts, to judge a stalled remainder against the
+	// area it was cut from.
+	total := signedArea2(l)
 
 	idx := make([]int, n)
 	for i := range idx {
@@ -247,6 +267,33 @@ func earClip(l faceLoop) (tris [][3]int, ok bool) {
 			break
 		}
 		if !clipped {
+			// Every remaining corner is reflex or zero-area to within float
+			// precision. isEar's predicates are exact, but the coordinates they
+			// judge are only accurate to eps, so a cap loop ending in a
+			// near-collinear chain — which rectangle side planes produce constantly
+			// by grazing along model edges — stalls the clip on cross2 values of
+			// order 1e-15.
+			//
+			// Returning nothing would throw away the entire cap over a sliver that
+			// small, and a missing cap leaves open edges that make later cutter
+			// planes fail their loop assembly too. So fan the remainder instead:
+			// its triangles carry no volume, but they keep every boundary edge
+			// paired, which is what keeps the part closed.
+			//
+			// The total > 0 guard is load-bearing. It is what distinguishes a
+			// negligible tail of a real loop from input that was never
+			// triangulable — a clockwise loop or a bowtie, whose area is negative
+			// or zero, must still come back as a refusal.
+			rem := make(faceLoop, len(idx))
+			for i, id := range idx {
+				rem[i] = l[id]
+			}
+			if total > 0 && math.Abs(signedArea2(rem)) <= 1e-9*total {
+				for i := 1; i+1 < len(idx); i++ {
+					tris = append(tris, [3]int{idx[0], idx[i], idx[i+1]})
+				}
+				return tris, true
+			}
 			break
 		}
 	}

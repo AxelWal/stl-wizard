@@ -16,6 +16,12 @@ import (
 )
 
 // Plane is a half-space. Points with N·p - D >= 0 are inside it.
+//
+// N must be unit length. Dist then returns a true signed distance, which is what
+// makes Classify's eps a distance in model units — the same tolerance the rest
+// of the pipeline is derived from. With a non-unit N the band silently scales by
+// |N|, so a plane built by hand rather than through Spec.Planes must normalise
+// first.
 type Plane struct {
 	N geom.Vec3
 	D float64
@@ -51,6 +57,14 @@ func (p Plane) Classify(v geom.Vec3, eps float64) Side {
 // centred on Origin and spanned by U and V.
 //
 // The half-space the Normal points into is the region that becomes part 2.
+//
+// U and V must be orthogonal to Normal and to each other. Basis does not use V
+// at all — it re-orthogonalises U against Normal and then recomputes v = n x u —
+// so a non-orthogonal pair is not corrected, it is quietly replaced. The cut
+// rectangle is then not the parallelogram the caller described: a UI gizmo whose
+// handles drifted out of square would draw one shape on screen and cut another.
+// Validate only rejects the degenerate extremes, so orthogonality is the
+// caller's contract to keep.
 type Spec struct {
 	Origin geom.Vec3
 	Normal geom.Vec3
@@ -85,6 +99,25 @@ func (s Spec) Basis() (u, v geom.Vec3) {
 }
 
 func (s Spec) Validate() error {
+	// Non-finite values first, because every test below is a comparison and NaN
+	// fails all of them: NaN <= 0 is false, so a NaN extent would pass the
+	// positive-extent test. It would then make every Classify return On, turn the
+	// four rectangle-side planes into no-ops, and hand the caller a silently
+	// unbounded cut reported as a good one — the same failure the parallel-U check
+	// below exists to prevent. This lives here rather than in a caller so that
+	// every caller inherits it; a command-line front end and a desktop app are two
+	// doors into the same room.
+	for _, f := range []float64{
+		s.Origin[0], s.Origin[1], s.Origin[2],
+		s.Normal[0], s.Normal[1], s.Normal[2],
+		s.U[0], s.U[1], s.U[2],
+		s.V[0], s.V[1], s.V[2],
+		s.Width, s.Height,
+	} {
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return errors.New("cutting plane has a non-finite origin, normal, basis vector or extent")
+		}
+	}
 	if s.Normal.Len() == 0 {
 		return errors.New("cutting plane has a zero normal")
 	}
@@ -121,10 +154,10 @@ func (s Spec) Planes() []Plane {
 	hw, hh := s.Width/2, s.Height/2
 
 	return []Plane{
-		{N: n, D: n.Dot(s.Origin)},           // keep the side the normal points into
-		{N: u, D: cu - hw},                   // u >= centre - half width
-		{N: u.Scale(-1), D: -(cu + hw)},      // u <= centre + half width
-		{N: v, D: cv - hh},                   // v >= centre - half height
-		{N: v.Scale(-1), D: -(cv + hh)},      // v <= centre + half height
+		{N: n, D: n.Dot(s.Origin)},      // keep the side the normal points into
+		{N: u, D: cu - hw},              // u >= centre - half width
+		{N: u.Scale(-1), D: -(cu + hw)}, // u <= centre + half width
+		{N: v, D: cv - hh},              // v >= centre - half height
+		{N: v.Scale(-1), D: -(cv + hh)}, // v <= centre + half height
 	}
 }

@@ -95,5 +95,3 @@ func Check(m *stl.Mesh, eps float64) Report {
 	}
 	return rep
 }
-
-func IsWatertight(m *stl.Mesh, eps float64) bool { return Check(m, eps).OK() }

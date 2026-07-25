@@ -27,6 +27,15 @@ func intersect(a, b geom.Vec3, p Plane) geom.Vec3 {
 // splitPolygon divides poly along p, returning the part inside the half-space
 // and the part outside it. Either result may be nil. Vertices lying on the
 // plane go into both, so the two pieces share an exact boundary.
+//
+// A polygon lying wholly on p goes entirely to in, and out is nil. That is not
+// an arbitrary tie-break, and it must not be "tidied" into splitting it or
+// dropping it. triangulateFace recovers each cap boundary as the edges of part
+// 2's polygons with both endpoints on p, and a model face flush with p needs no
+// cap precisely because it is present there and its edges cancel against the
+// plane's own. Send the coplanar face anywhere else and the cancellation stops
+// happening, and a spurious cap is laid over the flush face — a Critical that
+// has already been fixed once.
 func splitPolygon(poly Polygon, p Plane, eps float64) (in, out Polygon) {
 	n := len(poly)
 	if n < 3 {

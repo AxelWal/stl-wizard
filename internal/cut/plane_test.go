@@ -70,13 +70,35 @@ func TestValidateRejectsBadSpecs(t *testing.T) {
 	}
 
 	cases := map[string]Spec{
-		"zero normal":    {Normal: geom.Vec3{}, U: geom.Vec3{1, 0, 0}, V: geom.Vec3{0, 1, 0}, Width: 1, Height: 1},
-		"zero width":     SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 0, 10),
+		"zero normal":     {Normal: geom.Vec3{}, U: geom.Vec3{1, 0, 0}, V: geom.Vec3{0, 1, 0}, Width: 1, Height: 1},
+		"zero width":      SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 0, 10),
 		"negative height": SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 10, -1),
 		"non-orthogonal basis": {
 			Normal: geom.Vec3{0, 0, 1}, U: geom.Vec3{1, 0, 0}, V: geom.Vec3{1, 0, 0},
 			Width: 1, Height: 1,
 		},
+	}
+	for name, s := range cases {
+		if err := s.Validate(); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}
+
+// A non-finite value defeats every other check in Validate, because NaN fails
+// all comparisons: NaN <= 0 is false, so a NaN extent used to pass, make every
+// Classify return On, and leave the cut silently unbounded but reported as good.
+// The guard lives in Validate rather than in a caller so that every caller
+// inherits it.
+func TestValidateRejectsNonFiniteValues(t *testing.T) {
+	nanNormal := SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 10, 10)
+	nanNormal.Normal[1] = math.NaN()
+
+	cases := map[string]Spec{
+		"NaN width":  SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, math.NaN(), 10),
+		"Inf height": SpecFromNormal(geom.Vec3{}, geom.Vec3{0, 0, 1}, 10, math.Inf(1)),
+		"NaN normal": nanNormal,
+		"Inf origin": SpecFromNormal(geom.Vec3{math.Inf(-1), 0, 0}, geom.Vec3{0, 0, 1}, 10, 10),
 	}
 	for name, s := range cases {
 		if err := s.Validate(); err == nil {

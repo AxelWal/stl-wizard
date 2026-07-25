@@ -119,7 +119,7 @@ func TestBridgeHolesProducesOneLoopWithTheChannelVertices(t *testing.T) {
 // The end-to-end property that matters: an annular cap triangulates to the
 // annulus area, not the full disc.
 func TestBridgedAnnulusTriangulatesToTheAnnulusArea(t *testing.T) {
-	outer := projectZ(square(0, 0, 5))       // 10x10, area 100
+	outer := projectZ(square(0, 0, 5))             // 10x10, area 100
 	hole := reverseLoop(projectZ(square(0, 0, 2))) // 4x4, area 16
 	merged := bridgeHoles(outer, []faceLoop{hole})
 
@@ -133,9 +133,9 @@ func TestBridgedAnnulusTriangulatesToTheAnnulusArea(t *testing.T) {
 }
 
 func TestBridgeHolesHandlesTwoHoles(t *testing.T) {
-	outer := projectZ(square(0, 0, 10))            // 20x20, area 400
-	h1 := reverseLoop(projectZ(square(-5, 0, 2)))  // area 16
-	h2 := reverseLoop(projectZ(square(5, 0, 2)))   // area 16
+	outer := projectZ(square(0, 0, 10))           // 20x20, area 400
+	h1 := reverseLoop(projectZ(square(-5, 0, 2))) // area 16
+	h2 := reverseLoop(projectZ(square(5, 0, 2)))  // area 16
 	merged := bridgeHoles(outer, []faceLoop{h1, h2})
 
 	tris, ok := earClip(merged)

@@ -94,8 +94,10 @@ func TestParseVec3RejectsNonFiniteValues(t *testing.T) {
 	}
 }
 
-// NaN slips past Spec.Validate's own guard, because NaN <= 0 is false. The
-// command must reject it before the geometry ever sees it.
+// NaN used to slip past Spec.Validate, because NaN <= 0 is false, and the cut
+// then came back silently unbounded and reported as good. Validate rejects it
+// now, so the command inherits the refusal rather than carrying its own copy —
+// this test still passes, via the library's error instead of the command's.
 func TestRunRejectsNonFiniteExtents(t *testing.T) {
 	dir := t.TempDir()
 	in := filepath.Join(dir, "cube.stl")

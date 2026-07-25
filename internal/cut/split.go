@@ -53,8 +53,14 @@ const (
 	triOutside
 )
 
-// classifyTri is the fast path. On a large model nearly every triangle is wholly
-// on one side, and recognising that avoids allocating polygon fragments for it.
+// classifyTri reports where a triangle sits relative to the whole convex cutter.
+//
+// It is not a fast path, whatever it looks like. The design called for one — skip
+// the clip loop for a triangle wholly inside or wholly outside — but that was
+// never built, and Split's only caller of this function is the counter that
+// warns about faces the cut lies flat against. The clip loop below runs over
+// every triangle regardless. Wiring it in as a short circuit is a real
+// optimisation and remains available; it is just not what this is today.
 func classifyTri(t stl.Tri, planes []Plane, eps float64) triClass {
 	allInside := true
 	for _, p := range planes {
@@ -94,6 +100,16 @@ type taggedPoly struct {
 
 // Split cuts m with the bounded plane s, returning the material outside the
 // cutter as Part1 and the material inside it as Part2.
+//
+// Known limitation: a cutter plane exactly flush with a model face is not
+// handled cleanly. The flush face contributes on-plane edges that cancel against
+// the plane's own, so no cap is laid over it — which is right — but at a reflex
+// corner of that face the neighbouring geometry is still subdivided by the cut
+// while the flush face is not, leaving a T-junction. Such cuts come back with
+// Watertight() false and the parts flagged rather than withheld. Split already
+// warns when the plane lies flat against model faces; moving the plane a
+// fraction into the material is the answer, and a caller placing planes
+// programmatically should avoid exact coincidence with face positions.
 func Split(m *stl.Mesh, s Spec) (*Result, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err

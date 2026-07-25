@@ -22,6 +22,9 @@ import (
 	"stl-cutter/internal/stl"
 )
 
+// errFlagsReported marks an error the flag package has already reported itself.
+var errFlagsReported = errors.New("flag parsing failed")
+
 func parseVec3(s string) (geom.Vec3, error) {
 	parts := strings.Split(s, ",")
 	if len(parts) != 3 {
@@ -57,7 +60,10 @@ func run(args []string, out io.Writer) error {
 	height := fs.Float64("height", 1e9, "rectangle extent along the plane; the default spans any model")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		// fs has already written both the complaint and the usage text to out.
+		// Returning err verbatim would have main print the same complaint again on
+		// stderr, so it is wrapped in a marker main knows to stay quiet about.
+		return fmt.Errorf("%w: %v", errFlagsReported, err)
 	}
 	if *inPath == "" {
 		return errors.New("-in is required")
@@ -75,18 +81,9 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("-normal: %w", err)
 	}
 
-	for _, f := range []struct {
-		name  string
-		value float64
-	}{{"-width", *width}, {"-height", *height}} {
-		if math.IsNaN(f.value) || math.IsInf(f.value, 0) {
-			return fmt.Errorf("%s must be a finite number, got %v", f.name, f.value)
-		}
-		if f.value <= 0 {
-			return fmt.Errorf("%s must be greater than zero, got %v", f.name, f.value)
-		}
-	}
-
+	// The extents are not checked here. cut.Spec.Validate rejects a non-finite or
+	// non-positive extent for every caller, and duplicating that guard in one
+	// front end only teaches the next one that it does not need its own.
 	mesh, err := stl.ReadFile(*inPath)
 	if err != nil {
 		return err
@@ -114,12 +111,27 @@ func run(args []string, out io.Writer) error {
 			b.Size()[0], b.Size()[1], b.Size()[2],
 			meshcheck.Check(part, mesh.Epsilon()))
 	}
+
+	// Reported after the files are written, never instead of them: the library's
+	// contract is that a flagged part is returned, not withheld, and the whole
+	// point of this command is to load the output in a slicer and look at it. But
+	// a warning on stdout is invisible to a script, so a flagged part has to reach
+	// the exit code too.
+	if !res.Watertight() {
+		return errors.New("the cut did not produce two closed solids; the files above were written anyway")
+	}
 	return nil
 }
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	err := run(os.Args[1:], os.Stdout)
+	switch {
+	case err == nil:
+		return
+	case errors.Is(err, errFlagsReported):
+		// The flag package already printed the problem and the usage text.
+	default:
 		fmt.Fprintln(os.Stderr, "cutdemo:", err)
-		os.Exit(1)
 	}
+	os.Exit(1)
 }

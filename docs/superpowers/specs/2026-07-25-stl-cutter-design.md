@@ -258,11 +258,25 @@ Every fragment stays convex, because the intersection of a convex polygon with
 a half-space is convex. Fan triangulation is therefore always valid for both
 sides.
 
-Fast paths, checked before splitting: a triangle entirely inside all five
-half-spaces is copied to part 2 unchanged; a triangle entirely outside **any
-single** half-space is copied to part 1 unchanged. Only straddling triangles
-enter the loop above, so cost scales with the cut's cross-section, not with
-model size.
+**Not implemented as described.** The plan was: check before splitting, copy a
+triangle entirely inside all five half-spaces straight to part 2 and one
+entirely outside any single half-space straight to part 1, so that only
+straddling triangles enter the loop and cost scales with the cut's
+cross-section rather than with model size.
+
+What was built runs the split loop over every triangle. The whole-triangle
+classifier exists (`classifyTri` in `split.go`) but its only consumer is the
+counter that warns about faces the cut lies flat against; it never short
+circuits anything. `splitPolygon` does take a cheap path per plane — an
+untouched polygon is returned by reference with nothing allocated — so the
+constant is small, but the loop still visits every triangle five times.
+
+Measured: a fixed 2×2 mm cutting rectangle on UV spheres of 352, 1472 and 6016
+triangles costs 3.2 ms, 9.5 ms and 29 ms respectively. Cost tracks triangle
+count, not cross-section, at roughly 5 µs per triangle. A million-triangle
+model is therefore a several-second cut, which is what the progress-event
+requirement above is for. Wiring `classifyTri` in as a real short circuit
+remains the available optimisation if that is not good enough.
 
 ### Canonical edge intersection
 
@@ -296,7 +310,15 @@ Each loop is then triangulated:
 Each cap is emitted into **both** parts with opposite winding. That is what
 makes both results watertight.
 
-Output triangles with area below `eps²` are discarded.
+**Amended during implementation.** This section originally ended with "output
+triangles with area below `eps²` are discarded". That rule was removed, and it
+must not be reinstated. A cap triangulation tiles its region exactly, so culling
+any member of it drops that triangle's two boundary edges from the cap while the
+clipped surface still carries them, and the part silently stops being closed.
+Under an oblique plane basis a perfectly legitimate sliver falls below `eps²`,
+which is exactly how that used to happen. The triangulator instead guarantees no
+degenerate output at the source — a corner is only clipped when its signed area
+is strictly positive — so there is nothing left for an area filter to catch.
 
 ### Pins
 
