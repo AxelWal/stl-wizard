@@ -357,4 +357,4 @@ All 8 tests in the package pass.
 
 ### Commit
 `test: assert Basis derives u from U, not just some perpendicular`
-Commit SHA: [to be filled after commit]
+Commit SHA: 52e1a45
