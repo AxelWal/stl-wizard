@@ -146,11 +146,11 @@ const UShapeProfileArea float64 = 30*40 - 10*30
 // whole project. A plane at y=25 bounded to x in [0,15] must cut the left arm
 // and leave the right arm untouched and still attached to the base.
 //
-//	     y=40  ┌──┐      ┌──┐
-//	           │  │      │  │
-//	     y=10  │  └──────┘  │
-//	      y=0  └────────────┘
-//	          x=0  10    20  30
+//	y=40  ┌──┐      ┌──┐
+//	      │  │      │  │
+//	y=10  │  └──────┘  │
+//	 y=0  └────────────┘
+//	     x=0  10    20  30
 func UShape(depth float64) *stl.Mesh {
 	profile := [][2]float64{
 		{0, 0}, {30, 0}, {30, 40}, {20, 40}, {20, 10}, {10, 10}, {10, 40}, {0, 40},
@@ -161,7 +161,7 @@ func UShape(depth float64) *stl.Mesh {
 	// areas sum to UShapeProfileArea, which the fixture test verifies.
 	capTris := [][3]int{
 		{0, 1, 4}, {0, 4, 5}, {0, 5, 6}, {0, 6, 7}, // fan from vertex 0
-		{1, 2, 3}, {1, 3, 4},                       // fan from vertex 1
+		{1, 2, 3}, {1, 3, 4}, // fan from vertex 1
 	}
 	return prism(profile, capTris, 0, depth)
 }
