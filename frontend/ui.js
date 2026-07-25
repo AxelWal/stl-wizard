@@ -1,5 +1,5 @@
 import { initViewer, showParts, frameAll } from "./viewer.js";
-import { OpenModel } from "./wailsjs/go/main/App";
+import { OpenModel } from "./wailsjs/go/main/App.js";
 
 const statusEl = document.getElementById("status");
 
