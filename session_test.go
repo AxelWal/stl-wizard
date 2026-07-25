@@ -68,24 +68,33 @@ func TestWithTreeSerialisesConcurrentMutations(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
+	errs := make([]error, 50)
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			_ = s.WithTree(func(tr *Tree) error {
+			errs[i] = s.WithTree(func(tr *Tree) error {
 				leaf := tr.Leaves()[0]
 				_, _, err := tr.Split(leaf.ID, fixtures.Cube(2), fixtures.Cube(2), true, true)
 				return err
 			})
-		}()
+		}(i)
 	}
 	wg.Wait()
 
-	// Every successful split adds exactly one leaf; the count must be consistent
-	// with the number of splits that actually happened, whatever the ordering.
-	if got := len(s.Tree().Leaves()); got < 1 {
-		t.Errorf("got %d leaves, want at least 1", got)
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("split %d: %v", i, err)
+		}
+	}
+
+	// Each of the 50 splits turns one leaf into two, so the count is deterministic
+	// regardless of ordering. Asserting a range instead would pass against an
+	// unlocked implementation: a reviewer removed the lock and saw counts of 7, 8,
+	// 10, 16 and 19 while a ">= 1" assertion stayed green every run.
+	if got := len(s.Tree().Leaves()); got != 51 {
+		t.Errorf("got %d leaves, want 51 — a lost update means the lock is not holding", got)
 	}
 }
 

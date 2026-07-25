@@ -2,13 +2,16 @@ package main
 
 import (
 	"fmt"
-	"sync"
+	"sync/atomic"
 
 	"stl-cutter/internal/stl"
 )
 
-var globalIDLock sync.Mutex
-var globalNextID int
+// treeSeq hands each Tree a distinct id prefix, so part ids from a model that has
+// been closed can never collide with those of the model that replaced it. It is
+// consulted once per tree rather than once per part: Session serialises every
+// path that creates parts, so nothing finer is needed.
+var treeSeq atomic.Uint64
 
 // Part is one node of the cut tree. Only leaves carry a mesh: a part that has
 // been split is just a grouping, and holding its mesh would multiply memory for
@@ -41,6 +44,8 @@ type Tree struct {
 	Root       *Part  `json:"root"`
 	SelectedID string `json:"selectedId"`
 
+	seq     uint64 // unique per tree; makes this tree's part ids globally distinct
+	nextID  int
 	history []undoStep
 }
 
@@ -50,15 +55,12 @@ func (t *Tree) CanUndo() bool { return len(t.history) > 0 }
 // which is where the frontend's view of the tree is assembled.
 
 func (t *Tree) newPart(name string, m *stl.Mesh, watertight bool) *Part {
-	globalIDLock.Lock()
-	globalNextID++
-	id := globalNextID
-	globalIDLock.Unlock()
+	t.nextID++
 
 	b := m.BBox()
 	size := b.Size()
 	return &Part{
-		ID:         fmt.Sprintf("p%d", id),
+		ID:         fmt.Sprintf("t%dp%d", t.seq, t.nextID),
 		Name:       name,
 		Tris:       len(m.Tris),
 		Volume:     m.Volume(),
@@ -70,7 +72,7 @@ func (t *Tree) newPart(name string, m *stl.Mesh, watertight bool) *Part {
 }
 
 func NewTree(name string, root *stl.Mesh) *Tree {
-	t := &Tree{ModelName: name}
+	t := &Tree{ModelName: name, seq: treeSeq.Add(1)}
 	t.Root = t.newPart("whole", root, true)
 	t.SelectedID = t.Root.ID
 	return t
