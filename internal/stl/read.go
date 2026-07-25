@@ -1,12 +1,15 @@
 package stl
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"strconv"
+	"strings"
 
 	"stl-cutter/internal/geom"
 )
@@ -122,7 +125,59 @@ func readBinary(r io.ReaderAt, size int64) (*Mesh, error) {
 	return m, nil
 }
 
-// readASCII is implemented in Task 5.
+// readASCII parses the ASCII STL grammar loosely: it collects every "vertex x y z"
+// it finds and groups them in threes. Being permissive matters more than strict
+// grammar checking here, because ASCII STL is written by a long tail of tools
+// that disagree about whitespace and about which keywords are optional.
 func readASCII(r io.ReaderAt, size int64) (*Mesh, error) {
-	return nil, errors.New("ASCII STL reading not implemented yet")
+	sr := io.NewSectionReader(r, 0, size)
+	sc := bufio.NewScanner(sr)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var verts []geom.Vec3
+	sawSolid := false
+	line := 0
+
+	for sc.Scan() {
+		line++
+		fields := strings.Fields(sc.Text())
+		if len(fields) == 0 {
+			continue
+		}
+		switch strings.ToLower(fields[0]) {
+		case "solid":
+			sawSolid = true
+		case "vertex":
+			if len(fields) < 4 {
+				return nil, fmt.Errorf("line %d: vertex needs three coordinates, got %d", line, len(fields)-1)
+			}
+			var v geom.Vec3
+			for i := 0; i < 3; i++ {
+				f, err := strconv.ParseFloat(fields[i+1], 64)
+				if err != nil {
+					return nil, fmt.Errorf("line %d: coordinate %q is not a number", line, fields[i+1])
+				}
+				v[i] = f
+			}
+			verts = append(verts, v)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
+	}
+	if !sawSolid {
+		return nil, errors.New("not an STL file: no binary header match and no \"solid\" keyword")
+	}
+	if len(verts) == 0 {
+		return nil, errors.New("STL contains no triangles")
+	}
+	if len(verts)%3 != 0 {
+		return nil, fmt.Errorf("STL has %d vertices, which is not a multiple of three", len(verts))
+	}
+
+	m := &Mesh{Tris: make([]Tri, 0, len(verts)/3)}
+	for i := 0; i+2 < len(verts); i += 3 {
+		m.Tris = append(m.Tris, Tri{A: verts[i], B: verts[i+1], C: verts[i+2]})
+	}
+	return m, nil
 }
