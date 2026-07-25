@@ -1331,8 +1331,9 @@ func HollowBox(outer geom.Vec3, wall float64) *stl.Mesh {
 }
 
 // UShapeProfileArea is the area of the U cross-section: a 30x40 rectangle less
-// the 10x30 notch between the arms.
-const UShapeProfileArea = 30*40 - 10*30
+// the 10x30 notch between the arms. Typed float64 so tests can multiply it by a
+// depth without converting.
+const UShapeProfileArea float64 = 30*40 - 10*30
 
 // UShape is the letter U extruded along Z, and the motivating fixture for the
 // whole project. A plane at y=25 bounded to x in [0,15] must cut the left arm
@@ -1347,12 +1348,13 @@ func UShape(depth float64) *stl.Mesh {
 	profile := [][2]float64{
 		{0, 0}, {30, 0}, {30, 40}, {20, 40}, {20, 10}, {10, 10}, {10, 40}, {0, 40},
 	}
-	// Hand-decomposed into three rectangles: base, left arm, right arm. The
-	// shared internal edges are fine — both adjacent cap triangles are coplanar.
+	// Hand-decomposed as two fans, because the U is star-shaped from neither
+	// vertex alone: a fan from vertex 0 over the chain 1-4-5-6-7, and a fan from
+	// vertex 1 over the chain 2-3-4. The two fans meet along edge 1-4 and their
+	// areas sum to UShapeProfileArea, which the fixture test verifies.
 	capTris := [][3]int{
-		{0, 1, 4}, {0, 4, 5}, // base, x 0..30 y 0..10 (via the notch corners)
-		{0, 5, 6}, {0, 6, 7}, // left arm
-		{1, 2, 3}, {1, 3, 4}, // right arm
+		{0, 1, 4}, {0, 4, 5}, {0, 5, 6}, {0, 6, 7}, // fan from vertex 0
+		{1, 2, 3}, {1, 3, 4},                       // fan from vertex 1
 	}
 	return prism(profile, capTris, 0, depth)
 }
@@ -3393,6 +3395,7 @@ package cut
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"stl-cutter/internal/fixtures"
@@ -3659,19 +3662,32 @@ func TestSplitReportsNonManifoldInputWithoutFailing(t *testing.T) {
 	}
 }
 
-// Placing the plane exactly on a face is ambiguous, and the user should be told
+// Placing the plane exactly on a face is ambiguous, and the user must be told
 // rather than handed a silently wrong volume.
+//
+// The U at y=10 is the case that makes this reachable: the notch floor is a face
+// lying exactly in the plane, and material remains on both sides, so Split
+// proceeds rather than refusing for want of a part.
 func TestSplitWarnsWhenThePlaneIsCoplanarWithFaces(t *testing.T) {
-	m := fixtures.Cube(10)
-	s := SpecFromNormal(geom.Vec3{5, 5, 0}, geom.Vec3{0, 0, 1}, 100, 100)
+	m := fixtures.UShape(10)
+	s := SpecFromNormal(geom.Vec3{15, 10, 5}, geom.Vec3{0, 1, 0}, 100, 100)
 
 	r, err := Split(m, s)
 	if err != nil {
-		// Refusing is also acceptable here; a silent wrong answer is not.
-		return
+		t.Fatalf("Split: %v", err)
 	}
 	if len(r.Warnings) == 0 {
-		t.Error("expected a warning that the plane is coplanar with model faces")
+		t.Fatal("expected a warning that the plane is coplanar with model faces")
+	}
+
+	found := false
+	for _, w := range r.Warnings {
+		if strings.Contains(w, "flat against") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings do not mention the coplanar faces: %v", r.Warnings)
 	}
 }
 ```
