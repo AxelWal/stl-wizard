@@ -3,6 +3,10 @@ package cut
 import (
 	"math"
 	"testing"
+
+	"stl-cutter/internal/fixtures"
+	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
 )
 
 // squareFace builds a faceGroup covering a square centred on the origin.
@@ -186,8 +190,19 @@ func TestPlacePinsFindsRoomThatASingleGridPassMisses(t *testing.T) {
 
 // Sockets must not intersect each other any more than they may break out through
 // the face's edge.
+//
+// The face has to be cramped enough that pinSeparation actually constrains the
+// result. On the original 40x40 face, farthest-point sampling spaced 6 pins
+// about 15.75mm apart — far above both the old, broken threshold
+// (Diameter+Clearance = 4.15) and the correct one (pinSeparation = 5.3) — so
+// the assertion below never bound and the test passed even against the old
+// threshold. An 18x18 face asking for 6 pins is cramped enough that the room
+// available forces pins toward whatever the stopping threshold allows:
+// verified by mutation, the old threshold packs 6 pins in with a closest pair
+// ~4.98mm apart (between 4.15 and 5.3, so this test fails against it) while
+// the correct threshold places 5 with a closest pair ~6.68mm apart (passes).
 func TestPlacePinsKeepsSocketsApart(t *testing.T) {
-	g := squareFace(20)
+	g := squareFace(9) // 18x18
 	ps := PinSpec{Enabled: true, Count: 6, Diameter: 4, Length: 8}.withDefaults()
 
 	pins := placePins(g, ps)
@@ -218,5 +233,77 @@ func TestPlacePinsReturnsFewerWhenRoomIsLimited(t *testing.T) {
 		if d := distanceToBoundary(p, g); d < need {
 			t.Errorf("pin %d is %v from the boundary, need %v", i, d, need)
 		}
+	}
+}
+
+// A 10-cube cut in half at z=5: below the cut face there is 5mm of material.
+func TestAxialClearanceMeasuresMaterialBehindTheFace(t *testing.T) {
+	m := fixtures.Cube(10)
+	grid := newRayGrid(m)
+	eps := m.Epsilon()
+
+	got := axialClearance(grid, geom.Vec3{5, 5, 5}, geom.Vec3{0, 0, -1}, 2,
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
+	// axialClearance starts its ray 4*eps inside the material (see its doc
+	// comment), so the measured distance is short of the true 5mm by that
+	// amount. For this fixture 4*eps ~= 6.9e-6mm, wider than the 1e-6 tolerance
+	// the task brief specified verbatim — that tolerance assumed the offset
+	// would always be sub-nanometre, which is not true at this mesh scale.
+	// Loosened to 1e-4mm: still four orders of magnitude tighter than the 5mm
+	// feature being measured, and comfortably wider than the built-in offset.
+	if math.Abs(got-5) > 1e-4 {
+		t.Errorf("clearance = %v, want 5", got)
+	}
+}
+
+// The whole footprint is sampled, not just the centre: a socket is a cylinder,
+// and it breaks out if ANY of it does.
+func TestAxialClearanceUsesTheWholeFootprint(t *testing.T) {
+	// A box 20 wide, 20 deep, but only 3 tall over half its span: place the pin
+	// so its centre is over deep material while its rim overhangs the shallow part.
+	deep := fixtures.Box(geom.Vec3{0, 0, 0}, geom.Vec3{10, 20, 20})
+	shallow := fixtures.Box(geom.Vec3{10, 0, 17}, geom.Vec3{20, 20, 20})
+	m := &stl.Mesh{Tris: append(append([]stl.Tri{}, deep.Tris...), shallow.Tris...)}
+
+	grid := newRayGrid(m)
+	eps := m.Epsilon()
+
+	// Centred at x=8, radius 4, so the footprint reaches x=12 — over the shallow
+	// region, where only 3mm remains.
+	got := axialClearance(grid, geom.Vec3{8, 10, 20}, geom.Vec3{0, 0, -1}, 4,
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
+	if got > 4 {
+		t.Errorf("clearance = %v; the footprint overhangs 3mm-thick material, so it must report about 3", got)
+	}
+}
+
+// A ray that escapes without hitting anything means there is nothing behind the
+// point at all — the least safe answer, not the most.
+func TestAxialClearanceIsZeroWhereThereIsNoMaterial(t *testing.T) {
+	m := fixtures.Cube(10)
+	grid := newRayGrid(m)
+	eps := m.Epsilon()
+
+	// Standing on the top face looking up: nothing above it.
+	got := axialClearance(grid, geom.Vec3{5, 5, 10}, geom.Vec3{0, 0, 1}, 2,
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
+	if got != 0 {
+		t.Errorf("clearance = %v, want 0 where there is no material", got)
+	}
+}
+
+// The face the ray starts on must not count as the first thing it hits, or every
+// measurement would be zero.
+func TestAxialClearanceIgnoresTheFaceItStartsOn(t *testing.T) {
+	m := fixtures.Cube(10)
+	grid := newRayGrid(m)
+	eps := m.Epsilon()
+
+	got := axialClearance(grid, geom.Vec3{5, 5, 0}, geom.Vec3{0, 0, 1}, 2,
+		geom.Vec3{1, 0, 0}, geom.Vec3{0, 1, 0}, eps)
+	// See the tolerance note in TestAxialClearanceMeasuresMaterialBehindTheFace:
+	// the 4*eps starting offset exceeds a 1e-6 tolerance at this mesh scale.
+	if math.Abs(got-10) > 1e-4 {
+		t.Errorf("clearance = %v, want 10 — the floor it starts on must not count", got)
 	}
 }

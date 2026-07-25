@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"stl-cutter/internal/geom"
 )
 
 // PinSpec describes the alignment pins to place on a cut face. All lengths are
@@ -222,6 +224,49 @@ func deepest(candidates []pt2, g faceGroup) pt2 {
 		}
 	}
 	return best
+}
+
+// axialClearance measures how much material lies behind a point, in the
+// direction a socket would be bored.
+//
+// The whole footprint is sampled — the centre plus a ring at the socket's radius
+// — because a socket is a cylinder and it breaks out if any part of it does.
+// The smallest of those measurements wins.
+//
+// The ray starts a hair inside the material so the face it is standing on does
+// not register as a zero-distance hit; that offset is on the order of the mesh's
+// own tolerance and is negligible against a millimetre wall.
+func axialClearance(grid *rayGrid, centre, dir geom.Vec3, radius float64, u, v geom.Vec3, eps float64) float64 {
+	d := dir.Unit()
+	start := centre.Add(d.Scale(eps * 4))
+
+	worst := math.Inf(1)
+	samples := 8
+
+	probe := func(from geom.Vec3) {
+		dist, ok := grid.nearestHit(from, d)
+		if !ok {
+			// Nothing ahead at all: there is no material to bore into. That is
+			// the least safe answer, not an absent one.
+			worst = 0
+			return
+		}
+		if dist < worst {
+			worst = dist
+		}
+	}
+
+	probe(start)
+	for i := 0; i < samples; i++ {
+		a := 2 * math.Pi * float64(i) / float64(samples)
+		off := u.Scale(radius * math.Cos(a)).Add(v.Scale(radius * math.Sin(a)))
+		probe(start.Add(off))
+	}
+
+	if math.IsInf(worst, 1) {
+		return 0
+	}
+	return worst
 }
 
 func loopBounds(l faceLoop) (lo, hi pt2) {
