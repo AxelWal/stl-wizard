@@ -1845,7 +1845,7 @@ import (
 	"testing"
 
 	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
 )
 
 func TestBedFits(t *testing.T) {
