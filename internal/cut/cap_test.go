@@ -103,3 +103,102 @@ func TestTriangulateFaceReturnsNothingWhenThePlaneMissesEverything(t *testing.T)
 		t.Fatalf("got %d tris, open=%d, incomplete=%d; want all zero", len(tris), open, incomplete)
 	}
 }
+
+// collinearWellPolys returns three quads whose on-plane edges form a closed but
+// completely degenerate loop: three collinear points enclosing no area. earClip
+// cannot triangulate it, which is what drives the incomplete counter.
+func collinearWellPolys() []Polygon {
+	pts := [3][2]float64{{20, 0}, {22, 0}, {24, 0}}
+	out := make([]Polygon, 0, 3)
+	for i := range pts {
+		j := (i + 1) % len(pts)
+		a := geom.Vec3{pts[i][0], pts[i][1], 0}
+		b := geom.Vec3{pts[j][0], pts[j][1], 0}
+		out = append(out, Polygon{a, b,
+			{b[0], b[1], -1},
+			{a[0], a[1], -1},
+		})
+	}
+	return out
+}
+
+// One region failing to triangulate must not cost the others. The failure is
+// reported through incomplete rather than by dropping the whole cap or by
+// emitting partial geometry for the region that failed.
+func TestTriangulateFaceReportsOneFailedRegionAndKeepsTheRest(t *testing.T) {
+	polys := append(wellPolys(5, 3), collinearWellPolys()...)
+
+	tris, open, incomplete := triangulateFace(polys, zPlane, 1e-9)
+
+	if open != 0 {
+		t.Errorf("open = %d, want 0 — both boundaries close", open)
+	}
+	if incomplete != 1 {
+		t.Errorf("incomplete = %d, want 1 for the degenerate region", incomplete)
+	}
+
+	// The good square still produces its full cap, and the degenerate region
+	// contributes nothing at all rather than a sliver.
+	var area float64
+	for _, tr := range tris {
+		area += tr.Area()
+	}
+	if math.Abs(area-100) > 1e-9 {
+		t.Errorf("cap area = %v, want exactly 100 — the square's cap, and nothing from the degenerate region", area)
+	}
+}
+
+// tiltedWellPolys is wellPolys built directly from a plane's own (origin, u, v)
+// basis, so its top-edge vertices land exactly on p no matter how p is tilted.
+//
+// zPlane will not do for TestTriangulateFaceReusesTheInputVerticesExactly: its
+// normal is axis-aligned, so planeBasis hands back the trivial basis u=(1,0,0),
+// v=(0,1,0), origin=(0,0,0), and reconstructing a point from that basis is bit
+// exact — it would pass even if triangulateFace rebuilt vertices instead of
+// carrying them. A tilted plane makes u and v components that are not exactly
+// representable, so going through Dot then Scale/Add actually rounds.
+func tiltedWellPolys(p Plane, half, depth float64) []Polygon {
+	origin, u, v := planeBasis(p)
+	corners := [4][2]float64{{-half, -half}, {half, -half}, {half, half}, {-half, half}}
+	top := make([]geom.Vec3, 4)
+	for i, c := range corners {
+		top[i] = origin.Add(u.Scale(c[0])).Add(v.Scale(c[1]))
+	}
+	out := make([]Polygon, 0, 4)
+	for i := range top {
+		j := (i + 1) % 4
+		a, b := top[i], top[j]
+		out = append(out, Polygon{a, b, b.Sub(p.N.Scale(depth)), a.Sub(p.N.Scale(depth))})
+	}
+	return out
+}
+
+// The cap must reuse the very vertices the loops arrived with. Reconstructing
+// them from the plane basis would round, and the cap would no longer meet the
+// clipped triangles it is supposed to close.
+func TestTriangulateFaceReusesTheInputVerticesExactly(t *testing.T) {
+	p := Plane{N: geom.Vec3{1, 2, 3}.Unit(), D: 1.5}
+	polys := tiltedWellPolys(p, 5, 3)
+
+	// Every vertex that lies on the cut plane is a candidate cap vertex.
+	onPlane := map[geom.Vec3]bool{}
+	for _, poly := range polys {
+		for _, v := range poly {
+			if math.Abs(p.Dist(v)) <= 1e-9 {
+				onPlane[v] = true
+			}
+		}
+	}
+
+	tris, _, _ := triangulateFace(polys, p, 1e-9)
+	if len(tris) == 0 {
+		t.Fatal("no cap was produced")
+	}
+	for i, tr := range tris {
+		for j, v := range [3]geom.Vec3{tr.A, tr.B, tr.C} {
+			if !onPlane[v] {
+				t.Errorf("triangle %d vertex %d is %v, which is not one of the input vertices — it was reconstructed, not carried", i, j, v)
+			}
+		}
+	}
+}
