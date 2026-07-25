@@ -4357,3 +4357,27 @@ Deferred to the next two plans, and listed here so nothing is assumed complete:
 | GitHub Actions build matrix | Plan 3 |
 
 The pipeline order pins one constraint Plan 3 must respect: **pin planning runs between loop assembly and cap triangulation**, because pin circles enter the cap as additional hole loops. `triangulateFace` will therefore gain an optional set of extra hole loops rather than being called as-is.
+
+---
+
+## Post-Implementation Corrections
+
+Defects found during execution that the task text above does not capture. Tasks 4
+and 6 were corrected inline, because re-running them would otherwise reproduce a
+real bug. Everything from Task 7 onward is recorded here instead — the committed
+code and its tests are the artifact of record.
+
+| Task | Finding | Resolution |
+|---|---|---|
+| 4 | `Read` fell through to the ASCII parser on any size mismatch, so a truncated binary STL reported an ASCII error | Content sniffing via `looksLikeText`. **Task text corrected inline.** `5d4c387` |
+| 6 | `UVSphere` wound all three branches inward; `Tube` wound both annuli backwards | Winding reversed, normals re-derived independently. **Task text corrected inline.** `ae336fb` |
+| 6 | Volume assertions were structurally blind to faces in planes through the origin — 128 of `Tube`'s 512 triangles, including the whole bottom annulus | Added `TestFixtureVolumesAreTranslationInvariant`. **Task text corrected inline.** `0f69cdf` |
+| 7 | A degenerate triangle's two non-degenerate edge traversals self-cancelled into a fake shared edge, so `Check` reported a sliver-only mesh as watertight | `Report.Degenerate` counter; degenerate triangles are skipped whole. `bc16965` |
+
+Two of these are worth carrying into Plans 2 and 3 as standing lessons:
+
+- **A signed volume taken about the origin cannot see the winding of any face
+  whose plane contains the origin.** Assert translation invariance, or assert
+  edge orientation via `meshcheck.Check`, whenever winding correctness matters.
+- **`meshcheck.Check` is the load-bearing invariant.** Cutting and capping
+  produce zero-area slivers, so its `Degenerate` counter is not a formality.
