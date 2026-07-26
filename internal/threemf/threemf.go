@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // Plate is one part on one build plate.
@@ -102,7 +102,7 @@ func model(plates []Plate, ids []int) string {
 	var b strings.Builder
 	b.WriteString(xmlHeader)
 	b.WriteString(`<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` + "\n")
-	b.WriteString(" <metadata name=\"Application\">stl-cutter</metadata>\n")
+	b.WriteString(" <metadata name=\"Application\">stl-wizard</metadata>\n")
 	b.WriteString(" <resources>\n")
 	for i, p := range plates {
 		fmt.Fprintf(&b, "  <object id=\"%d\" type=\"model\" name=\"%s\">\n", ids[i], escape(p.Name))

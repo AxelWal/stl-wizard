@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // maxAutoSplitDepth bounds the recursion. A model needing more than this many

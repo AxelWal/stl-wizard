@@ -21,10 +21,10 @@ package repair
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/shells"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/shells"
+	"stl-wizard/internal/stl"
 )
 
 // Result records what repair did, and what it could not do.

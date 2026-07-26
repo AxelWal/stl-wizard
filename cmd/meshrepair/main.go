@@ -21,9 +21,9 @@ import (
 	"os"
 	"time"
 
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/repair"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/repair"
+	"stl-wizard/internal/stl"
 )
 
 var errFlagsReported = errors.New("flag parsing failed")

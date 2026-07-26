@@ -11,14 +11,14 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/orient"
-	"stl-cutter/internal/repair"
-	"stl-cutter/internal/shells"
-	"stl-cutter/internal/stl"
-	"stl-cutter/internal/threemf"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/orient"
+	"stl-wizard/internal/repair"
+	"stl-wizard/internal/shells"
+	"stl-wizard/internal/stl"
+	"stl-wizard/internal/threemf"
 )
 
 // App is the bound service. Every exported method on it is callable from the

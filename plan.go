@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"stl-cutter/internal/cut"
+	"stl-wizard/internal/cut"
 )
 
 // PlannedCut is one cut the user has asked for but not yet made.

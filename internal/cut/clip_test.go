@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 var zPlane = Plane{N: geom.Vec3{0, 0, 1}, D: 0}

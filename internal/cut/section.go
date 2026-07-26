@@ -3,8 +3,8 @@ package cut
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // Section describes where a plane crosses a mesh.

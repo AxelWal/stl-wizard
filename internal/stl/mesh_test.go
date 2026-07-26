@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // unitCube returns a 1x1x1 cube at the origin with outward-facing normals,

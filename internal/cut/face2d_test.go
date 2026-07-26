@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // square returns a loop in the z=0 plane, counter-clockwise seen from +Z.

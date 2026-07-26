@@ -1,7 +1,7 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "stl-cutter",
-  "outputfilename": "stl-cutter",
+  "name": "stl-wizard",
+  "outputfilename": "stl-wizard",
   "wailsjsdir": "./frontend",
   "author": {
     "name": "Axel Walsleben",

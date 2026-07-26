@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 func writeFixture(t *testing.T, name string, m *stl.Mesh) string {

@@ -15,7 +15,7 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:            "STL Cutter",
+		Title:            "STL Wizard",
 		Width:            1280,
 		Height:           800,
 		MinWidth:         800,

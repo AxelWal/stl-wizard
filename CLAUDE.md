@@ -1,4 +1,4 @@
-# stl-cutter — working notes for Claude
+# stl-wizard — working notes for Claude
 
 ## Two standing rules
 

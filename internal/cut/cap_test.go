@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // wellPolys returns the four vertical quads of a square shaft whose top edges

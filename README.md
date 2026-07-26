@@ -1,4 +1,4 @@
-# STL Cutter
+# STL Wizard
 
 Splits STL models into printable parts with a **bounded** cutting plane: the
 plane is restricted to a rectangle, so one cut can take the top off one arm of a

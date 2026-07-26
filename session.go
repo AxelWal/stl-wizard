@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/stl"
 )
 
 // maxTriangles caps what will be loaded. A triangle costs 72 bytes as a soup,

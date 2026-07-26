@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/stl"
 )
 
 func TestPartHandlerServesBinarySTL(t *testing.T) {

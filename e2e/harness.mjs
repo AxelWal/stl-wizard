@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 
 // Scratch space for files the suite makes the app write. Named, not deleted: when a
 // 3MF assertion fails the file itself is the evidence.
-export const scratch = mkdtempSync(path.join(os.tmpdir(), "stl-cutter-e2e-"));
+export const scratch = mkdtempSync(path.join(os.tmpdir(), "stl-wizard-e2e-"));
 let plateSeq = 1;
 
 // unzip via the system tool rather than a hand-rolled central-directory parser. Node
@@ -33,7 +33,7 @@ function unzipEntry(file, name) {
 }
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const APP_URL = process.env.STL_CUTTER_URL || "http://localhost:34115";
+export const APP_URL = process.env.STL_WIZARD_URL || "http://localhost:34115";
 
 // playwright is expected to be installed globally (npm i -g @playwright/cli),
 // which is not on Node's resolution path for a project without a package.json.

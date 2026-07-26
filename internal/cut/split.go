@@ -6,9 +6,9 @@ import (
 	"math"
 	"sort"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/stl"
 )
 
 // Result holds the two halves of a cut and anything the caller needs to know

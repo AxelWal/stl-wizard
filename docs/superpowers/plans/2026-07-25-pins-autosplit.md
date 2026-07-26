@@ -1,4 +1,4 @@
-# STL Cutter — Pins, Auto-Split and CI Implementation Plan
+# STL Wizard — Pins, Auto-Split and CI Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,12 +8,12 @@
 
 **Tech Stack:** Go 1.26, Wails v2.13.0, vendored three.js r185. Standard library only in `internal/`.
 
-**Spec:** `docs/superpowers/specs/2026-07-25-stl-cutter-design.md`
+**Spec:** `docs/superpowers/specs/2026-07-25-stl-wizard-design.md`
 **Builds on:** `2026-07-25-geometry-core.md` and `2026-07-25-wails-app.md`, both complete.
 
 ## Global Constraints
 
-- Module path `stl-cutter`. Standard library only inside `internal/`. No CGO. No npm, no bundler.
+- Module path `stl-wizard`. Standard library only inside `internal/`. No CGO. No npm, no bundler.
 - **`Split` and `SplitProgress` must not change.** They took a BLOCKED report and four review rounds to get correct, and are covered by a randomized-cut regression test. Pins attach afterwards; auto-split calls `Split` repeatedly. If you find yourself editing `split.go`, stop and report.
 - Every `wails` command carries `-tags webkit2_41`. A plain build fails on this machine looking for webkit2gtk 4.0 while the system has 4.1, and `wails doctor` reports a **false negative** about it.
 - Bound-method changes require regenerating `frontend/wailsjs/` before committing — those files sit outside `go test`'s reach and drift there is invisible until the window breaks.
@@ -95,9 +95,9 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 func TestRayTriangleHitsAndMisses(t *testing.T) {
@@ -248,8 +248,8 @@ package cut
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // rayTriangle returns the distance along dir at which the ray from origin meets
@@ -499,8 +499,8 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
 )
 
 func TestCutFaceOfAHalvedCube(t *testing.T) {
@@ -634,8 +634,8 @@ package cut
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // cutFace recovers a finished part's cut face: the triangles lying on plane p,
@@ -733,7 +733,7 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // squareFace builds a faceGroup covering a square centred on the origin.
@@ -1202,7 +1202,7 @@ func TestAxialClearanceIgnoresTheFaceItStartsOn(t *testing.T) {
 }
 ```
 
-Add `"stl-cutter/internal/stl"` to the test file's imports if it is not already there.
+Add `"stl-wizard/internal/stl"` to the test file's imports if it is not already there.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1351,7 +1351,7 @@ func TestPinCylinderCavityHasNegativeVolume(t *testing.T) {
 }
 ```
 
-Add `"stl-cutter/internal/meshcheck"` to the test file's imports.
+Add `"stl-wizard/internal/meshcheck"` to the test file's imports.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1447,7 +1447,7 @@ func discAt(centre, normal, u, v geom.Vec3, r float64, segments int) []stl.Tri {
 }
 ```
 
-Add `"stl-cutter/internal/geom"` and `"stl-cutter/internal/stl"` to `pins.go`'s imports.
+Add `"stl-wizard/internal/geom"` and `"stl-wizard/internal/stl"` to `pins.go`'s imports.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1844,8 +1844,8 @@ package cut
 import (
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/stl"
 )
 
 func TestBedFits(t *testing.T) {
@@ -1952,7 +1952,7 @@ func TestPlanAutoSplitStopsAtTheDepthCap(t *testing.T) {
 }
 ```
 
-This file imports `stl-cutter/internal/stl` for `*stl.Mesh`, and `stl-cutter/internal/geom` is not needed.
+This file imports `stl-wizard/internal/stl` for `*stl.Mesh`, and `stl-wizard/internal/geom` is not needed.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -1970,8 +1970,8 @@ import (
 	"fmt"
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // maxAutoSplitDepth bounds the recursion. A model needing more than this many
@@ -2203,7 +2203,7 @@ func TestCutWithoutPinsIsUnchanged(t *testing.T) {
 }
 ```
 
-Add `"stl-cutter/internal/cut"` to `app_test.go`'s imports. **Every existing `app.Cut(...)` call in the file now needs a third argument** — pass `cut.PinSpec{}` to leave them behaving exactly as before, and say in your report how many you updated.
+Add `"stl-wizard/internal/cut"` to `app_test.go`'s imports. **Every existing `app.Cut(...)` call in the file now needs a third argument** — pass `cut.PinSpec{}` to leave them behaving exactly as before, and say in your report how many you updated.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -2254,7 +2254,7 @@ Carry `pinWarnings` out of the closure and append it to the outcome's warnings a
 
 and use `p1.OK()`/`p2.OK()` for the two children's flags. Add a warning naming the part when either fails.
 
-Add `"stl-cutter/internal/meshcheck"` to `app.go`'s imports.
+Add `"stl-wizard/internal/meshcheck"` to `app.go`'s imports.
 
 - [ ] **Step 4: Update the frontend call**
 
@@ -2495,7 +2495,7 @@ func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error
 
 You will need a small `cutPart` helper that performs one cut on a named part with a given `Spec` and `PinSpec`, updating the tree — factor it out of `Cut` so both use the same path rather than duplicating it. Report how you structured that.
 
-Add `"stl-cutter/internal/stl"` to `app.go`'s imports.
+Add `"stl-wizard/internal/stl"` to `app.go`'s imports.
 
 - [ ] **Step 4: Verify and regenerate bindings**
 
@@ -2752,11 +2752,11 @@ jobs:
         run: go test ./... -race
 
       - name: Build
-        run: wails build -tags "${{ matrix.tags }}" -o stl-cutter-${{ matrix.name }}
+        run: wails build -tags "${{ matrix.tags }}" -o stl-wizard-${{ matrix.name }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: stl-cutter-${{ matrix.name }}
+          name: stl-wizard-${{ matrix.name }}
           path: build/bin/*
 ```
 

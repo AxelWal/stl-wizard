@@ -9,8 +9,8 @@ package shells
 import (
 	"sort"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // Split returns one mesh per body, largest by triangle count first.

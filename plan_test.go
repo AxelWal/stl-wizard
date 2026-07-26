@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // acrossTheArms is the plane that cuts the U at y=25 spanning everything.

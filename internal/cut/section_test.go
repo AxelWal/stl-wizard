@@ -4,9 +4,9 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 func planeAt(origin, normal geom.Vec3) Plane {

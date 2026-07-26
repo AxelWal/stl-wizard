@@ -1,4 +1,4 @@
-# STL Cutter — Design
+# STL Wizard — Design
 
 **Date:** 2026-07-25
 **Status:** Approved
@@ -485,7 +485,7 @@ overruled.
 
 ## Build and Distribution
 
-- Wails v2.13.0, module path `stl-cutter`.
+- Wails v2.13.0, module path `stl-wizard`.
 - Cross-compilation is not supported in v2, so `.github/workflows/build.yml`
   runs a matrix over `ubuntu-latest`, `macos-latest`, and `windows-latest`, each
   executing `wails build` natively and uploading its artifact on tag push.

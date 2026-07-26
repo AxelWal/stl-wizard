@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"os"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 func build(name string) (*stl.Mesh, error) {

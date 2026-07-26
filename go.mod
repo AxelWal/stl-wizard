@@ -1,4 +1,4 @@
-module stl-cutter
+module stl-wizard
 
 go 1.26.5
 

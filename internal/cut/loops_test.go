@@ -3,7 +3,7 @@ package cut
 import (
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 func TestBoundaryEdgesFindsTheEdgeLyingOnThePlane(t *testing.T) {

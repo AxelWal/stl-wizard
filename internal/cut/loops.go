@@ -4,7 +4,7 @@ import (
 	"math"
 	"sort"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // boundaryEdges returns the cap boundary on plane p: the edges of polys whose

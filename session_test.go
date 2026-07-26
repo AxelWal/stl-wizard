@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/stl"
 )
 
 func TestSessionStartsEmpty(t *testing.T) {

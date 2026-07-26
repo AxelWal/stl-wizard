@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/stl"
 )
 
 func TestNewTreeHasASingleSelectableRoot(t *testing.T) {

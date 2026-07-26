@@ -26,7 +26,7 @@ if ! flatpak info com.bambulab.BambuStudio >/dev/null 2>&1; then
 fi
 
 # The flatpak is confined to $HOME, so work there whatever the input path.
-work=$(mktemp -d "$HOME/.stl-cutter-verify-XXXXXX")
+work=$(mktemp -d "$HOME/.stl-wizard-verify-XXXXXX")
 trap 'rm -rf "$work"' EXIT
 cp "$file" "$work/in.3mf"
 

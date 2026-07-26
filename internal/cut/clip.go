@@ -1,7 +1,7 @@
 package cut
 
 import (
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // Polygon is a planar convex polygon. Splitting a convex polygon by a plane

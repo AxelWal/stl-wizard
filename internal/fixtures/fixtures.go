@@ -6,8 +6,8 @@ package fixtures
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // prism extrudes a counter-clockwise 2D profile along +Z from z0 to z1,

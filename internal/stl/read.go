@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 func float32bits(v float64) uint32 { return math.Float32bits(float32(v)) }

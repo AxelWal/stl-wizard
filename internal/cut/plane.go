@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"math"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // Plane is a half-space. Points with N·p - D >= 0 are inside it.

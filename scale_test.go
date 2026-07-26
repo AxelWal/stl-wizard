@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/fixtures"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/fixtures"
 )
 
 func loadCube(t *testing.T, size float64) *App {

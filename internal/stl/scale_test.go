@@ -6,10 +6,10 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/stl"
 )
 
 // The volume identity is the strong check: it holds only if every vertex was

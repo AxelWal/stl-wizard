@@ -6,8 +6,8 @@ import (
 	"math"
 	"sort"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // Spec configures the search. The zero value is the intended default.

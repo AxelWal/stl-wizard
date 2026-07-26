@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // Report summarises how far a mesh is from being a closed, consistently wound

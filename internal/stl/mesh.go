@@ -5,7 +5,7 @@ package stl
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // Tri is a single triangle. Winding is counter-clockwise seen from outside the

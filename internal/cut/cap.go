@@ -3,8 +3,8 @@ package cut
 import (
 	"math"
 
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 // planeBasis returns a point on p together with a right-handed orthonormal

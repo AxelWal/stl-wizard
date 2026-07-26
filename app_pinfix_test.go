@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/fixtures"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/fixtures"
 )
 
 // The project's biggest known defect: cutting through a pin's cylinder leaves a rim of

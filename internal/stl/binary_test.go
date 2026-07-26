@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 func TestBinaryRoundTripPreservesTriangles(t *testing.T) {

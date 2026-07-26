@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/stl"
 )
 
 // newPartHandler serves a part's geometry as binary STL.

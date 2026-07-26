@@ -16,10 +16,10 @@ import (
 	"strconv"
 	"strings"
 
-	"stl-cutter/internal/cut"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/cut"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/stl"
 )
 
 // errFlagsReported marks an error the flag package has already reported itself.

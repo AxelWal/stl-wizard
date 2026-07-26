@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
 )
 
 func TestCutFaceOfAHalvedCube(t *testing.T) {

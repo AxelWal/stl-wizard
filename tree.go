@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"stl-cutter/internal/meshcheck"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/meshcheck"
+	"stl-wizard/internal/stl"
 )
 
 // treeSeq hands each Tree a distinct id prefix, so part ids from a model that has

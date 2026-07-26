@@ -3,8 +3,8 @@ package cut
 import (
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/stl"
 )
 
 func TestBedFits(t *testing.T) {

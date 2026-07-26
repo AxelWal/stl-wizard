@@ -3,7 +3,7 @@ package cut
 import (
 	"sort"
 
-	"stl-cutter/internal/geom"
+	"stl-wizard/internal/geom"
 )
 
 // pt2 is a point in a cut plane's 2D basis.

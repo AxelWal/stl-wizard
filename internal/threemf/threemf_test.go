@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"stl-cutter/internal/fixtures"
-	"stl-cutter/internal/geom"
-	"stl-cutter/internal/stl"
+	"stl-wizard/internal/fixtures"
+	"stl-wizard/internal/geom"
+	"stl-wizard/internal/stl"
 )
 
 func writePlates(t *testing.T, plates []Plate) *zip.Reader {
