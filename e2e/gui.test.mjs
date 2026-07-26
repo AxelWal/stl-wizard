@@ -227,6 +227,113 @@ test("repeated failed cuts never leave the progress bar on screen", async (app) 
   expect.equal(await app.hidden("#progress"), true, "the progress bar after a successful cut");
 });
 
+group("the plane's numbers");
+
+// The regression. Selecting a planned cut used to draw it flat whatever its real
+// orientation, because showGizmo re-frames — position, rotation and extent — and only two
+// of those three were put back afterwards. Every cut of a fit-to-printer plan looked like
+// it lay in one layer, while cutting did the right thing, so the preview disagreed with
+// what would actually happen.
+test("a planned cut is previewed with the plane it will actually cut with", async (app) => {
+  await app.open("u");
+  await app.scale({ mm: true, x: 600, y: 800, z: 200, uniform: false });
+  await app.planFitToPrinter();
+
+  const cuts = (await app.plan()).cuts;
+  expect.ok(cuts.length >= 4, `several planned cuts, got ${cuts.length}`);
+
+  const seen = new Set();
+  for (const c of cuts.slice(0, 6)) {
+    const shown = await app.page.evaluate((id) => {
+      window.app.selectPlanned(id);
+      return window.app.planeInput();
+    }, c.id);
+    for (const k of [0, 1, 2]) {
+      expect.near(shown.normal[k], c.plane.normal[k], 1e-6, `${c.name} normal component ${k}`);
+      expect.near(shown.origin[k], c.plane.origin[k], 1e-6, `${c.name} origin component ${k}`);
+    }
+    seen.add(shown.normal.map((v) => Math.round(v)).join(","));
+  }
+  // A fit-to-printer plan halves different axes, so the previews cannot all face one way.
+  // Without this the test would still pass if every stored normal happened to be equal.
+  expect.ok(seen.size > 1, `the previewed planes to face more than one way, saw ${[...seen]}`);
+});
+
+test("typing a position moves the plane", async (app) => {
+  await app.open("u");
+  await app.setPlane({ px: 7.5, py: 25, pz: 5 });
+
+  const pi = await app.page.evaluate(() => window.app.planeInput());
+  expect.near(pi.origin[0], 7.5, 1e-6, "x");
+  expect.near(pi.origin[1], 25, 1e-6, "y");
+  expect.near(pi.origin[2], 5, 1e-6, "z");
+});
+
+test("typing a rotation turns the plane", async (app) => {
+  await app.open("u");
+  await app.setPlane({ rx: -90 });
+
+  // The plane's local +Z is the cut normal, so a quarter turn about X aims it at +Y.
+  const pi = await app.page.evaluate(() => window.app.planeInput());
+  expect.near(pi.normal[0], 0, 1e-6, "normal x");
+  expect.near(pi.normal[1], 1, 1e-6, "normal y");
+  expect.near(pi.normal[2], 0, 1e-6, "normal z");
+});
+
+// The numbers have to describe the plane on screen however it moved, or they are a
+// separate source of truth that can disagree with it.
+test("dragging the gizmo updates the numbers", async (app) => {
+  await app.open("u");
+  const before = await app.planeFields();
+
+  const centre = await app.gizmoCentre();
+  await app.dragMouse(centre, { x: centre.x + 120, y: centre.y + 40 });
+  await app.settle();
+
+  const after = await app.planeFields();
+  const moved = [0, 1, 2].some((i) => Math.abs(after[i] - before[i]) > 1);
+  expect.ok(moved, `the position fields to follow the drag, ${before} -> ${after}`);
+});
+
+// Typing into a field must not have the caret yanked to the end by the change handler
+// writing the same field back — the bug that made Width unusable once.
+test("the field being typed into keeps its caret", async (app) => {
+  await app.open("u");
+  await app.page.click("#plane-px");
+  await app.page.press("#plane-px", "Control+a");
+  await app.page.type("#plane-px", "42");
+  expect.equal(await app.value("#plane-px"), "42", "what the user typed");
+  const pi = await app.page.evaluate(() => window.app.planeInput());
+  expect.near(pi.origin[0], 42, 1e-6, "what the gizmo got");
+});
+
+// Typed numbers reach the plan, so a planned cut can be placed exactly rather than dragged.
+test("a planned cut can be re-placed by typing and saved", async (app) => {
+  await app.open("u");
+  await app.setPlane({ px: 7.5, py: 25, pz: 5, rx: -90 });
+  await app.page.fill("#plane-width", "15");
+  await app.page.fill("#plane-height", "20");
+  await app.addPlane();
+  await app.execute();
+  expect.ok(
+    (await app.parts()).some((p) => p.volume === 1500),
+    "the typed plane cuts the left arm only"
+  );
+
+  // Widen it by typing, save, run again.
+  await app.page.evaluate(() => document.querySelector("#plan .row").click());
+  await app.page.fill("#plane-width", "200");
+  await app.page.fill("#plane-height", "200");
+  await app.act("save-plane");
+  await app.execute();
+
+  const parts = await app.parts();
+  expect.ok(
+    parts.some((p) => p.volume === 3000),
+    `the widened plane's result, got ${parts.map((p) => p.volume).join(", ")}`
+  );
+});
+
 group("busy indicator");
 
 // The label is set synchronously before the first await, so a test can start a command

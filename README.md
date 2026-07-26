@@ -234,8 +234,12 @@ transforms by the inverse transpose rather than by the factors.
 
 Each entry gets a numbered default name you can type over, a tick to leave it out
 without losing where its plane was, and a delete button. Clicking an entry loads its
-plane back under the gizmo and draws it, so it can be moved and put back with **Save
-plane**. Only the selected entry's plane is drawn — fifty rectangles at once would hide
+plane back under the gizmo and draws it — at the orientation it will actually cut with —
+so it can be moved and put back with **Save plane**.
+
+The Cutting plane panel shows the plane's **position, rotation in degrees, and extent** as
+numbers you can type into, so a cut can be placed exactly rather than only dragged. They
+follow the gizmo however it moves, so they always describe the plane on screen. Only the selected entry's plane is drawn — fifty rectangles at once would hide
 the model.
 
 **The plan is the source of truth and the part tree is derived from it.** Cut now
@@ -384,7 +388,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-86 tests over every GUI feature, pointer input included. See CLAUDE.md.
+92 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

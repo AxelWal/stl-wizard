@@ -7,7 +7,7 @@ import {
   PlanFitToPrinter, ExecutePlan, Plan, ReorderPlan, ScaleModel,
 } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
-import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
+import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode, placement, setPlacement } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
 import { renderPlan } from "./plan.js";
 import { initScale, syncScale } from "./scale.js";
@@ -23,6 +23,10 @@ initScale(applyScale);
 const planeControls = document.getElementById("plane-controls");
 const widthEl = document.getElementById("plane-width");
 const heightEl = document.getElementById("plane-height");
+// Position and rotation, so a plane can be placed by typing rather than only by dragging.
+const placeEls = ["plane-px", "plane-py", "plane-pz", "plane-rx", "plane-ry", "plane-rz"].map((id) =>
+  document.getElementById(id)
+);
 const treePanel = document.getElementById("tree-panel");
 const treeEl = document.getElementById("tree");
 const infoEl = document.getElementById("part-info");
@@ -50,6 +54,13 @@ document.getElementById("mode-rotate").addEventListener("click", () => setMode("
 widthEl.addEventListener("input", () => setExtent(parseFloat(widthEl.value), extent().height));
 heightEl.addEventListener("input", () => setExtent(extent().width, parseFloat(heightEl.value)));
 
+for (const el of placeEls) {
+  el.addEventListener("input", () => {
+    const n = placeEls.map((e) => parseFloat(e.value));
+    setPlacement(n.slice(0, 3), n.slice(3));
+  });
+}
+
 // Keep the number fields in step with the gizmo, whichever moved.
 onChange((input) => {
   // Writing .value into a focused number field moves the caret to the end, so a
@@ -57,6 +68,14 @@ onChange((input) => {
   // alone; it is already showing what they typed.
   if (document.activeElement !== widthEl) widthEl.value = input.width.toFixed(2);
   if (document.activeElement !== heightEl) heightEl.value = input.height.toFixed(2);
+
+  // Position and rotation follow the gizmo however it moved — dragged, typed, or loaded
+  // from a planned cut — so the numbers always describe the plane on screen.
+  const p = placement();
+  const shown = [...p.position, ...p.rotation];
+  for (const [i, el] of placeEls.entries()) {
+    if (document.activeElement !== el) el.value = shown[i].toFixed(2);
+  }
 });
 
 function message(text, kind = "warn") {
@@ -370,12 +389,10 @@ function loadPlaneIntoGizmo(plane) {
   g.position.set(...plane.origin);
   g.updateMatrixWorld();
   setExtent(plane.width, plane.height);
-  showGizmo();
-  // showGizmo re-frames the plane over the model, which would throw away the position
-  // just restored, so put it back afterwards.
-  g.position.set(...plane.origin);
-  g.updateMatrixWorld();
-  setExtent(plane.width, plane.height);
+  // false: reveal it where it is. Letting showGizmo re-frame and then restoring the
+  // placement afterwards is what showed every planned cut lying flat — the rotation was
+  // the one of the three things not put back.
+  showGizmo(false);
 }
 
 cutBtn.addEventListener("click", async () => {

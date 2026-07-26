@@ -280,6 +280,27 @@ function makeApp(page) {
       await api.placePlane({ rotation: [-Math.PI / 2, 0, 0], position, width, height });
     },
 
+    // setPlane types into the position, rotation and extent fields, which is how a plane
+    // is placed exactly rather than by dragging.
+    async setPlane(v) {
+      await page.evaluate((v) => {
+        const ids = { px: "plane-px", py: "plane-py", pz: "plane-pz", rx: "plane-rx", ry: "plane-ry", rz: "plane-rz" };
+        for (const [k, id] of Object.entries(ids)) {
+          if (v[k] === undefined) continue;
+          const el = document.getElementById(id);
+          el.value = String(v[k]);
+          el.dispatchEvent(new Event("input"));
+        }
+      }, v);
+    },
+
+    planeFields: () =>
+      page.evaluate(() =>
+        ["plane-px", "plane-py", "plane-pz", "plane-rx", "plane-ry", "plane-rz"].map((id) =>
+          Number(document.getElementById(id).value)
+        )
+      ),
+
     async setPins(spec) {
       await page.evaluate((s) => {
         document.getElementById("pins-enabled").checked = s.enabled !== false;
@@ -345,6 +366,8 @@ function makeApp(page) {
     async scale(opts) {
       await page.evaluate((o) => {
         const mode = document.getElementById("scale-mode");
+        // mm may be a single value (X, proportions kept) or simply a flag saying the
+        // x/y/z below are millimetres rather than percentages.
         mode.value = o.mm !== undefined ? "mm" : "percent";
         mode.dispatchEvent(new Event("change"));
 
@@ -358,7 +381,7 @@ function makeApp(page) {
           el.dispatchEvent(new Event("input"));
         };
         if (o.percent !== undefined) set("scale-x", o.percent);
-        else if (o.mm !== undefined) set("scale-mm" in o ? "scale-x" : "scale-x", o.mm);
+        else if (typeof o.mm === "number") set("scale-x", o.mm);
         else {
           set("scale-x", o.x);
           set("scale-y", o.y);
@@ -389,6 +412,11 @@ function makeApp(page) {
     // and error alike — writes at least one message, so a non-empty #messages
     // means the round trip to Go is complete.
     async act(id) {
+      // Clear first. Every handler clears #messages itself, but it does so after the
+      // click has been awaited — so a second command in the same test could see the
+      // first one's message still in the DOM and return before its own work had even
+      // started. That made two different scale tests fail on alternate runs.
+      await page.evaluate(() => document.getElementById("messages").replaceChildren());
       await page.click(`#${id}`);
       await page.waitForFunction(() => document.getElementById("messages").textContent.length > 0, null, {
         timeout: 60000,

@@ -138,6 +138,7 @@ that produced the figures above.
     #repair-on-load                       repair holes as the model loads
     #do-separate                          split a part into its bodies
     #do-plates                            export a multi-plate 3MF
+    #plane-px/py/pz #plane-rx/ry/rz       plane position and rotation in degrees
     #plane-width #plane-height            rectangle extent
     #mode-translate #mode-rotate          gizmo mode
     #pins-enabled #pins-count #pins-diameter #pins-length
@@ -161,7 +162,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 86
+    node e2e/gui.test.mjs              # all 92
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -171,7 +172,12 @@ unexpected console error fails the test on its own.
 
 Three things the harness knows that are easy to get wrong:
 
-- **`app.cameraStill()` before projecting anything to a screen coordinate.**
+- `showGizmo(reframe)` — pass **false** to reveal a plane that already has a placement.
+`showGizmo()` re-frames position, rotation *and* extent, and `loadPlaneIntoGizmo` used to
+call it and put back only two of those three, so every planned cut previewed lying flat
+while cutting did the right thing. Do not reinstate the restore-afterwards shape.
+
+**`app.cameraStill()` before projecting anything to a screen coordinate.**
   OrbitControls has damping, so the camera keeps easing for frames after
   `frameAll()`. A corner handle is about 5px across and the drift is about 25px,
   so a mid-drift projection aims the mouse at where the handle *was* and the

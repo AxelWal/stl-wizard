@@ -206,11 +206,18 @@ export function mode() {
   return transform.mode;
 }
 
-// showGizmo parks the plane at the centre of what is on screen, sized to cover
-// it, so the first thing the user sees is a plane that would actually cut.
-export function showGizmo() {
+// showGizmo reveals the plane, by default parking it at the centre of what is on screen
+// and sized to cover it, so the first thing the user sees is a plane that would actually
+// cut.
+//
+// reframe false leaves the placement alone, for showing a plane that already has one — a
+// planned cut being previewed. It is a parameter rather than something the caller undoes
+// afterwards because undoing it is what went wrong: restoring the position and the extent
+// but not the rotation showed every planned cut lying flat, so the preview disagreed with
+// what the cut would actually do.
+export function showGizmo(reframe = true) {
   const box = modelBounds();
-  if (box) {
+  if (reframe && box) {
     const centre = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     group.position.copy(centre);
@@ -264,6 +271,33 @@ export function extent() {
 
 export function gizmoGroup() {
   return group;
+}
+
+// placement reports where the plane is, for the numeric fields. Euler angles in degrees
+// rather than a quaternion, because degrees are what a user can type.
+export function placement() {
+  group.updateMatrixWorld();
+  const e = new THREE.Euler().setFromQuaternion(group.quaternion, "XYZ");
+  const deg = 180 / Math.PI;
+  return {
+    position: [group.position.x, group.position.y, group.position.z],
+    rotation: [e.x * deg, e.y * deg, e.z * deg],
+  };
+}
+
+// setPlacement moves the plane to typed coordinates and angles. Non-finite components are
+// ignored rather than applied: a number field emptied mid-edit yields NaN, and a NaN
+// position would put the plane nowhere with no way back.
+export function setPlacement(position, rotation) {
+  const rad = Math.PI / 180;
+  if (position && position.every(Number.isFinite)) {
+    group.position.set(position[0], position[1], position[2]);
+  }
+  if (rotation && rotation.every(Number.isFinite)) {
+    group.rotation.set(rotation[0] * rad, rotation[1] * rad, rotation[2] * rad);
+  }
+  group.updateMatrixWorld();
+  emitChange();
 }
 
 // planeInput converts the gizmo's transform into exactly what App.Cut expects.
