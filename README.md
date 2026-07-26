@@ -113,19 +113,26 @@ returned flagged, never silently.
 - Auto-split is axis-aligned only: a part that would fit the bed turned
   diagonally is split anyway, because rotating to fit is a packing problem
   and this is a splitter.
-- **The frontend has been driven headlessly, not by hand.** The viewer, the
-  bounded cut, part selection, measurements, undo, pins, auto-split and the
-  error path have all been exercised in a real browser against the dev server
-  and produce correct results (see CLAUDE.md for the run). What no one has
-  tested is everything needing a pointing device: orbit, pan, zoom, dragging
-  the plane or its corner handles, and interrupting a drag mid-gesture. Those
-  are in `docs/manual-verification.md` and still want a human before a release
-  build.
+- **The frontend is covered by an automated browser suite, not by hand.**
+  `e2e/gui.test.mjs` drives the real page against the dev server — the viewer,
+  the gizmo, the bounded cut, selection, measurements, undo, pins, auto-split,
+  the error paths, and pointer input including orbit, pan, zoom and corner-handle
+  drags. What is left for a human is in `docs/manual-verification.md`: opening
+  exported pinned pieces in a slicer, and a model of a few hundred thousand
+  triangles for the progress bar. Do those before a release build.
 
 ## Testing
 
     go test ./...        # the Go side
     go test ./... -race  # the session locking
+
+The window has its own suite, which drives a real browser against the dev
+server and needs it running:
+
+    wails dev -tags webkit2_41 &
+    node e2e/gui.test.mjs
+
+34 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

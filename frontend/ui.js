@@ -1,7 +1,8 @@
-import { initViewer, showParts, frameAll } from "./viewer.js";
+import * as THREE from "three";
+import { initViewer, showParts, frameAll, cameraRef, controlsRef, domElement } from "./viewer.js";
 import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
-import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup } from "./gizmo.js";
+import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
 import { initPins, pinSpec, bedSpec, showPanels, reportPins } from "./pins.js";
 
@@ -137,11 +138,20 @@ document.getElementById("open").addEventListener("click", async () => {
 // These are the same functions the click handlers call, deliberately: a headless
 // run has to exercise the real path, or it only proves that a parallel imitation
 // of the app works.
+// three is handed over whole rather than growing a helper per assertion. The
+// pointer tests have to project a corner handle's world position to a screen
+// coordinate before they can drag it, and every other maths helper they might
+// want is already in here.
 window.app = {
   openPath: (path) => load(() => OpenPath(path)),
   gizmoGroup,
   setExtent,
   planeInput,
+  three: THREE,
+  mode,
+  camera: cameraRef,
+  controls: controlsRef,
+  canvas: domElement,
 };
 
 cutBtn.addEventListener("click", async () => {

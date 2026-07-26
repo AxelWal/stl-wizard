@@ -199,6 +199,13 @@ export function setMode(mode) {
   transform.setMode(mode); // "translate" or "rotate"
 }
 
+// mode reports which of the two the gizmo is in. Read by the mode-switch test,
+// which otherwise has no way to tell a button that wired up from one that did
+// not — TransformControls looks identical from outside until you drag it.
+export function mode() {
+  return transform.mode;
+}
+
 // showGizmo parks the plane at the centre of what is on screen, sized to cover
 // it, so the first thing the user sees is a plane that would actually cut.
 export function showGizmo() {

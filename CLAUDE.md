@@ -1,5 +1,27 @@
 # stl-cutter — working notes for Claude
 
+## Two standing rules
+
+**1. Use the superpowers skills. Every task.** Invoke the relevant skill before
+acting — including before asking a clarifying question or reading the code.
+`brainstorming` before designing anything, `test-driven-development` before
+writing any feature or fix, `systematic-debugging` before proposing a cause,
+`writing-plans` for anything multi-step, `verification-before-completion`
+before claiming something works. If a skill might apply, it does.
+
+**2. Every feature and every bugfix gets a Playwright test.** Anything that
+changes what the window does is not finished until `e2e/gui.test.mjs` covers
+it, and Go-side changes still want their `go test` as well. Write the test
+first, watch it fail, then fix — a test written afterwards passes immediately
+and proves nothing. For a bugfix the test must reproduce the bug, so run it
+against the unfixed code and see it fail before you touch anything.
+
+Both rules apply to small changes too. This project has been bitten repeatedly
+by tests that passed against broken behaviour: a plain `wails build` stays green
+while the window renders blank, and a volume-sum assertion holds for any
+partition of a model. **After writing a test, break the production code on
+purpose and confirm the test fails.** If it still passes, the test is decoration.
+
 ## Every wails command needs `-tags webkit2_41`
 
 This machine has webkit2gtk **4.1**, not 4.0. A plain `wails build` or
@@ -19,8 +41,11 @@ Port 34115 is the Wails v2 default and `wails.json` sets no `devServer` key.
 Stop it with `lsof -ti:34115 -sTCP:LISTEN | xargs -r kill`. First start takes
 30–60s: it runs `go mod tidy`, regenerates bindings, and compiles.
 
-`playwright-cli` (global npm `@playwright/cli`) drives it. Sessions are named
-with `-s`; artefacts land in `.playwright-cli/` (gitignored):
+For anything repeatable, write it into `e2e/gui.test.mjs` (see below) rather
+than driving by hand. `playwright-cli` (global npm `@playwright/cli`) is for
+ad-hoc probing — screenshots you want to look at, or working out why a test
+fails. Sessions are named with `-s`; artefacts land in `.playwright-cli/`
+(gitignored):
 
     playwright-cli -s=stl open http://localhost:34115
     playwright-cli -s=stl screenshot        # then Read the .png — look at it
@@ -49,12 +74,17 @@ stuck on an empty sidebar and can never reach the cut.
     window.app.gizmoGroup()             // the THREE.Group carrying the plane
     window.app.setExtent(w, h)
     window.app.planeInput()             // exactly what Cut receives
+    window.app.mode()                   // "translate" or "rotate"
+    window.app.three                    // the THREE namespace, for projections
+    window.app.camera() .controls() .canvas()
 
 `openPath` shares one `load()` body with the button's click handler, so
-driving it exercises the real path rather than an imitation of it.
+driving it exercises the real path rather than an imitation of it. `three` is
+handed over whole instead of growing a helper per assertion — the pointer tests
+need it to project a handle's world position to a screen coordinate.
 
-Place the plane by writing to the group — the corner handles and
-TransformControls need a real mouse and cannot be driven precisely:
+Aim the plane by writing to the group. A pointer can drag it (the suite does
+exactly that) but cannot be aimed at a coordinate:
 
     const g = window.app.gizmoGroup();
     g.rotation.set(-Math.PI/2, 0, 0);   // local +Z is the cut normal; this aims it at +Y
@@ -115,6 +145,40 @@ Part geometry is served as binary STL from `/part/{id}.stl` (`assets.go`), not
 through a binding — JSON-encoding a million triangles as decimal strings
 would be far slower and larger.
 
+## The Playwright suite
+
+`e2e/gui.test.mjs` covers every GUI feature, pointer input included. It needs
+the dev server running, and it drives the same page a user gets:
+
+    wails dev -tags webkit2_41 &
+    timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
+    node e2e/gui.test.mjs              # all 34
+    node e2e/gui.test.mjs pointer      # one group, matched by substring
+
+`e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
+`app.cut()`, `app.parts()`, `app.dragMouse()`. Add a test by calling `test()`
+inside a `group()`; the runner reloads the page before each one, and any
+unexpected console error fails the test on its own.
+
+Three things the harness knows that are easy to get wrong:
+
+- **`app.cameraStill()` before projecting anything to a screen coordinate.**
+  OrbitControls has damping, so the camera keeps easing for frames after
+  `frameAll()`. A corner handle is about 5px across and the drift is about 25px,
+  so a mid-drift projection aims the mouse at where the handle *was* and the
+  drag silently does nothing. `handleScreenPos` and `gizmoCentre` wait for you.
+- **A left-drag at the viewport centre translates the plane, it does not orbit.**
+  TransformControls sits on the plane's origin and latches the press. Use
+  `app.emptySpot()` to orbit and `app.gizmoCentre()` to translate.
+- **`cut:done` arrives after the Cut promise settles.** It comes from a defer in
+  Go over the event channel, so reading `#progress` straight after an error
+  message catches it still visible. Wait for it.
+
+The suite launches the system Chrome, because the globally installed
+playwright's bundled-browser revision does not match what is downloaded under
+`~/.cache/ms-playwright`. It falls back to the bundled build if there is no
+system Chrome.
+
 ## Testing without the window
 
     go test ./...
@@ -155,11 +219,17 @@ piece that is not a closed solid (37 of 64 with pins, 0 of 64 without).
 Everything affected is flagged at runtime, never silent.
 
 `PinSpec.Count` is a **target, not a demand** (`internal/cut/pins.go:17`):
-placement grids the face and stops when it runs out of room, and pins it never
-had a candidate for produce no skip message. Asking for 4 on the U's 10×15mm
-cut face places 1 and reports only `Placed 1 alignment pin(s)`. Skip
-messages appear only for candidates the wall guard actually rejected.
+placement grids the face and stops when it runs out of room, and a pin it never
+found a candidate for produces no `SkippedPin` to explain itself. The sidebar
+says `Placed 1 of 8 alignment pin(s) — the cut face had room for no more`;
+`CutOutcome.PinsRequested` is what makes that possible. Individual skip
+messages, with the measurement that caused them, appear only for candidates the
+wall guard actually rejected.
 
-`docs/manual-verification.md` is the human checklist — pointer devices,
-orbiting, mid-drag interruptions, and slicer inspection of exported pins, none
-of which a headless browser can reach.
+A pin needs its length plus the minimum wall *behind* the cut face, so the 10mm
+cube fixture halved leaves 5mm and refuses anything longer than about 3mm. That
+is correct, and two tests depend on it.
+
+`docs/manual-verification.md` is what is left for a human: exported pins in a
+slicer, and a real model of a few hundred thousand triangles. Everything the
+browser can reach is in `e2e/gui.test.mjs` now, pointer input included.

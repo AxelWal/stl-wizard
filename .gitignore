@@ -7,3 +7,8 @@ build/bin
 
 # playwright-cli sessions: screenshots, snapshots and console logs
 .playwright-cli
+
+# Fixtures the e2e suite generates on demand from cmd/genfixture. u.stl is
+# committed because the README and the docs quote its measurements.
+/testdata/*.stl
+!/testdata/u.stl

@@ -138,6 +138,61 @@ func TestCutSplitsTheSelectedPart(t *testing.T) {
 	}
 }
 
+// PinSpec.Count is a target, not a demand: placement grids the cut face and
+// stops when it runs out of room, and a pin it never found a candidate for
+// produces no SkippedPin to explain itself. Without the requested count beside
+// the placed one the frontend cannot tell "you asked for 4 and got 1" from
+// "you asked for 1 and got 1", so it quietly under-delivers on the user's
+// request — the one thing this application is not allowed to do.
+func TestCutReportsHowManyPinsWereRequested(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	// The U's left arm gives a 10x15mm cut face, which has room for far fewer
+	// than eight 4mm pins.
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{7.5, 25, 5},
+		Normal: [3]float64{0, 1, 0},
+		Width:  15,
+		Height: 20,
+	}, cut.PinSpec{Enabled: true, Count: 8, Diameter: 4, Length: 8, Clearance: 0.15, MinWall: 1, PegOnPart: 1})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	if out.PinsRequested != 8 {
+		t.Errorf("PinsRequested = %d, want 8", out.PinsRequested)
+	}
+	if out.PinsPlaced >= 8 {
+		t.Fatalf("PinsPlaced = %d; this face is too small to fit them all, so the test proves nothing", out.PinsPlaced)
+	}
+}
+
+// Reporting a requested count when pins are switched off would have the
+// frontend announce "0 of 4 placed" for a cut that never asked for any.
+func TestCutReportsNoPinsRequestedWhenPinsAreOff(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	id := app.session.Tree().Root.ID
+
+	out, err := app.Cut(id, PlaneInput{
+		Origin: [3]float64{5, 5, 5},
+		Normal: [3]float64{0, 0, 1},
+		Width:  100,
+		Height: 100,
+	}, cut.PinSpec{Enabled: false, Count: 4, Diameter: 4, Length: 8})
+	if err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+	if out.PinsRequested != 0 {
+		t.Errorf("PinsRequested = %d, want 0 when pins are disabled", out.PinsRequested)
+	}
+}
+
 // The bounded rectangle is the whole point: cutting the U's left arm must leave
 // the right arm attached.
 func TestCutBoundedToOneArmOfTheU(t *testing.T) {

@@ -155,11 +155,16 @@ type PlaneInput struct {
 // CutOutcome is what the frontend needs after a cut: the new tree, and an honest
 // account of how well it went.
 type CutOutcome struct {
-	Tree        *TreeView        `json:"tree"`
-	Watertight  bool             `json:"watertight"`
-	Warnings    []string         `json:"warnings"`
-	PinsPlaced  int              `json:"pinsPlaced"`
-	PinsSkipped []cut.SkippedPin `json:"pinsSkipped"`
+	Tree       *TreeView `json:"tree"`
+	Watertight bool      `json:"watertight"`
+	Warnings   []string  `json:"warnings"`
+	PinsPlaced int       `json:"pinsPlaced"`
+	// PinsRequested is what the user asked for, which PinsPlaced can fall short
+	// of without any SkippedPin saying so — cut.PinSpec.Count is a target and
+	// placement simply stops when the face runs out of room. The frontend needs
+	// both numbers to admit it placed fewer than were asked for.
+	PinsRequested int              `json:"pinsRequested"`
+	PinsSkipped   []cut.SkippedPin `json:"pinsSkipped"`
 }
 
 // Cut splits the given part with a bounded plane, then applies the given
@@ -234,12 +239,17 @@ func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutco
 		return nil, err
 	}
 
+	requested := 0
+	if pins.Enabled {
+		requested = pins.Count
+	}
 	return &CutOutcome{
-		Tree:        a.view(),
-		Watertight:  res.Watertight(),
-		Warnings:    append(res.Warnings, pinRes.Warnings...),
-		PinsPlaced:  pinRes.Placed,
-		PinsSkipped: pinRes.Skipped,
+		Tree:          a.view(),
+		Watertight:    res.Watertight(),
+		Warnings:      append(res.Warnings, pinRes.Warnings...),
+		PinsPlaced:    pinRes.Placed,
+		PinsRequested: requested,
+		PinsSkipped:   pinRes.Skipped,
 	}, nil
 }
 

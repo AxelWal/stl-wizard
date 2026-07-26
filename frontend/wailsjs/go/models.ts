@@ -188,6 +188,7 @@ export namespace main {
 	    watertight: boolean;
 	    warnings: string[];
 	    pinsPlaced: number;
+	    pinsRequested: number;
 	    pinsSkipped: cut.SkippedPin[];
 	
 	    static createFrom(source: any = {}) {
@@ -200,6 +201,7 @@ export namespace main {
 	        this.watertight = source["watertight"];
 	        this.warnings = source["warnings"];
 	        this.pinsPlaced = source["pinsPlaced"];
+	        this.pinsRequested = source["pinsRequested"];
 	        this.pinsSkipped = this.convertValues(source["pinsSkipped"], cut.SkippedPin);
 	    }
 	

@@ -59,7 +59,19 @@ export function showPanels() {
 export function reportPins(outcome, message) {
   if (!outcome) return;
   if (outcome.pinsPlaced > 0) {
-    message(`Placed ${outcome.pinsPlaced} alignment pin(s).`, "ok");
+    // Count is a target: placement grids the cut face and stops when it runs
+    // out of room, and a pin it never found a candidate for leaves no
+    // SkippedPin behind to explain itself. Reporting only the placed count
+    // would let the user read "Placed 1" as having got the 8 they asked for.
+    if (outcome.pinsRequested > outcome.pinsPlaced) {
+      message(
+        `Placed ${outcome.pinsPlaced} of ${outcome.pinsRequested} alignment pin(s) — ` +
+          `the cut face had room for no more.`,
+        "warn"
+      );
+    } else {
+      message(`Placed ${outcome.pinsPlaced} alignment pin(s).`, "ok");
+    }
   }
   for (const s of outcome.pinsSkipped || []) {
     message(
