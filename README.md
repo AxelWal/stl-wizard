@@ -188,6 +188,23 @@ large file:
     go run ./cmd/meshrepair -in model.stl                 # just the verdict
     go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
+## Feedback while it works
+
+Anything slow shows a labelled indicator: loading, repair, separating bodies, scaling,
+the orientation search, exporting, cutting. The label names the operation, because a bare
+spinner at 70 seconds leaves you guessing which slow thing is happening and whether it is
+the one you asked for.
+
+It starts as a spinner and becomes a percentage bar the moment a cut begins reporting
+progress — a cut is the only operation that knows how far along it is. The controls lock
+while something runs, since firing a second command at a busy backend blocks on the
+session lock and looks like a freeze rather than a queue.
+
+The spinner is a CSS animation on purpose. CSS animations run on the compositor, so it
+keeps turning while the main thread is blocked parsing tens of megabytes of geometry —
+which is exactly the moment a frozen spinner would convince you the application had
+crashed.
+
 ## Scale
 
 The Scale panel takes a percentage of the file or a target size in millimetres, with
@@ -367,7 +384,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-82 tests over every GUI feature, pointer input included. See CLAUDE.md.
+86 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

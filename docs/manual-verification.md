@@ -45,6 +45,18 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       academic, a dead camera after a drag interrupted mid-gesture was a real bug
       fixed twice, via two different code paths.
 
+## Feedback while it works
+
+- [x] **[auto]** Loading shows a spinner naming the file and clears it afterwards, with
+      the controls locked meanwhile.
+- [x] **[auto]** A command that fails clears the indicator too.
+- [x] **[auto]** A cut turns the spinner into a percentage bar once it reports progress.
+- [x] **[auto]** A stray progress event outside a command draws nothing.
+- [x] **Seen by hand** on a real 24MB load: the spinner turns, the label reads
+      "Loading gedreht_660_prozent_wholea.stl", and Add plane is disabled.
+- [ ] Watch it during a cut long enough to see the bar actually advance rather than jump
+      from 0 to 100. *(Needs a model of a million triangles or more.)*
+
 ## Scale
 
 - [x] **[auto]** A percentage scales the model and the reported size and volume follow.

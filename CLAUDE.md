@@ -132,6 +132,7 @@ that produced the figures above.
     #messages          results, warnings  #viewport        three.js canvas
     #progress          long-cut bar       #progress-bar    its fill
 
+    #busy #busy-label #busy-spinner       the busy indicator
     #plan #do-execute #clear-plan #save-plane   the cut plan
     #scale-panel #scale-mode #scale-uniform #scale-x/y/z #do-scale #reset-scale
     #repair-on-load                       repair holes as the model loads
@@ -160,7 +161,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 82
+    node e2e/gui.test.mjs              # all 86
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -220,6 +221,23 @@ nothing about behaviour — that is what the browser run above is for.
   `TransformControls.getHelper()` instead; see `frontend/gizmo.js:179`.
 - `wails dev` reloads the page on every save, so a half-finished multi-file
   edit will throw in the console. Re-check after the last edit lands.
+
+## The busy indicator
+
+Every slow command goes through `withBusy(label, fn)` in `ui.js`, which owns the
+indicator, the control lock and the clearing `finally`. Do not manage those per handler:
+a stuck indicator is the failure mode, and it has already happened once here — the
+progress bar was driven by `cut:start`/`cut:done`, whose delivery order is not
+guaranteed, and when they arrived reversed it stayed on screen with nothing able to clear
+it. One wrapper is one place to get wrong.
+
+The label is set **synchronously before the first await**, which is what lets a test start
+a command without awaiting, assert the indicator is up, then await and assert it is gone —
+no polling, no timing window. Use that shape rather than waiting for the spinner to
+appear.
+
+The spinner is a CSS `@keyframes` rotation, not a JS one, because CSS animations run on
+the compositor and survive the main thread blocking inside `STLLoader.parse`.
 
 ## Scale
 

@@ -8,7 +8,7 @@
 // to the Wails window, not the page, so a browser tab cannot answer them. See
 // CLAUDE.md.
 
-import { group, test, expect, run, repoRoot } from "./harness.mjs";
+import { group, test, expect, run, repoRoot, fixture as fixturePath } from "./harness.mjs";
 
 // The U spans 30 x 40 x 10 with a volume of 9000. A plane at y=25 bounded to
 // x 0..15 takes the top off the left arm only: 1500 away, 7500 left over the
@@ -225,6 +225,79 @@ test("repeated failed cuts never leave the progress bar on screen", async (app) 
   await app.cut();
   expect.equal((await app.parts()).length, 2, "a genuine cut still succeeds");
   expect.equal(await app.hidden("#progress"), true, "the progress bar after a successful cut");
+});
+
+group("busy indicator");
+
+// The label is set synchronously before the first await, so a test can start a command
+// without awaiting it and observe the indicator with no polling and no timing window.
+test("loading shows a spinner naming the file, and clears it afterwards", async (app) => {
+  expect.equal(await app.hidden("#busy"), true, "nothing running to begin with");
+
+  const started = app.page.evaluate(
+    (f) => window.app.openPath(f),
+    fixturePath("u")
+  );
+  const during = await app.page.evaluate(() => ({
+    hidden: document.getElementById("busy").hidden,
+    label: document.getElementById("busy-label").textContent,
+    cutDisabled: document.getElementById("do-cut").disabled,
+  }));
+  expect.equal(during.hidden, false, "the indicator is up while loading");
+  expect.contains(during.label, "u.stl", "the label names the file");
+  expect.equal(during.cutDisabled, true, "the controls are locked while busy");
+
+  await started;
+  await app.page.waitForFunction(() => document.getElementById("busy").hidden, null, { timeout: 15000 });
+  expect.equal(await app.disabled("#do-cut"), false, "the controls come back");
+});
+
+// The finally, tested. A command that throws must not leave the indicator on screen —
+// that failure mode has happened here before with the progress bar.
+test("a failed command clears the indicator too", async (app) => {
+  await app.page
+    .evaluate((f) => window.app.openPath(f).catch(() => null), `${repoRoot}/README.md`)
+    .catch(() => null);
+
+  await app.page.waitForFunction(() => document.getElementById("busy").hidden, null, { timeout: 15000 });
+  expect.equal(await app.hidden("#busy"), true, "the indicator is cleared after a failure");
+  expect.equal(await app.disabled("#do-cut"), false, "and the controls are usable again");
+});
+
+// A cut is the one operation that knows how far along it is, so the spinner is joined by
+// a real bar the moment it says so.
+test("a cut turns the spinner into a bar", async (app) => {
+  await app.open("sphere");
+  await app.planeAcrossTheArms({ position: [0, 0, 0], width: 200, height: 200 });
+  await app.addPlane();
+
+  // The bar starts hidden — indeterminate until something reports progress.
+  const before = await app.page.evaluate(() => document.getElementById("progress").hidden);
+  expect.equal(before, true, "no bar before anything reports progress");
+
+  const running = app.page.evaluate(() => document.getElementById("do-execute").click());
+  const sawBar = await app.page
+    .waitForFunction(() => !document.getElementById("progress").hidden, null, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  await running;
+  await app.page.waitForFunction(() => document.getElementById("busy").hidden, null, { timeout: 30000 });
+
+  expect.ok(sawBar, "the bar appeared once the cut reported progress");
+  expect.equal(await app.hidden("#busy"), true, "and everything cleared at the end");
+});
+
+// A stray progress event outside a command must not draw a bar over an idle window.
+test("progress events outside a command draw nothing", async (app) => {
+  await app.open("u");
+  await app.page.waitForFunction(() => document.getElementById("busy").hidden);
+
+  await app.page.evaluate(() => {
+    // The same shape the Go side emits.
+    window.runtime && window.runtime.EventsEmit && window.runtime.EventsEmit("cut:progress", 0.5);
+  });
+  expect.equal(await app.hidden("#progress"), true, "no bar while nothing is running");
+  expect.equal(await app.hidden("#busy"), true, "and no indicator");
 });
 
 group("scale");

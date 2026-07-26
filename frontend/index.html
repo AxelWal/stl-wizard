@@ -117,7 +117,13 @@
           <button id="do-export">Export parts…</button>
         </div>
         <div id="messages"></div>
-        <div id="progress" hidden><div id="progress-bar"></div></div>
+        <div id="busy" hidden>
+          <div id="busy-row">
+            <span id="busy-spinner"></span>
+            <span id="busy-label"></span>
+          </div>
+          <div id="progress" hidden><div id="progress-bar"></div></div>
+        </div>
       </aside>
       <main id="viewport"></main>
     </div>

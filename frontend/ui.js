@@ -93,13 +93,43 @@ function busy(on) {
 //
 // cut:progress still drives the width — a message that arrives late or out of
 // order only moves the bar, which the next one corrects.
+// A cut is the one operation that knows how far along it is, so the moment it says so
+// the spinner is joined by a real bar. Nothing goes back the other way within one
+// command.
 EventsOn("cut:progress", (f) => {
+  if (busyEl.hidden) return; // a stray event outside a command must not draw anything
+  progressEl.hidden = false;
   progressBar.style.width = `${Math.round(f * 100)}%`;
 });
 
-function progress(on) {
-  progressEl.hidden = !on;
-  if (on) progressBar.style.width = "0%";
+const busyEl = document.getElementById("busy");
+const busyLabel = document.getElementById("busy-label");
+
+// withBusy shows the indicator for the whole of one command and clears it however that
+// command ends.
+//
+// Every slow path goes through here rather than each handler managing its own flag. That
+// is the point, not tidiness: a stuck indicator is this feature's failure mode, and it
+// has already happened once — the progress bar used to be driven by cut:start and
+// cut:done, whose delivery order is not guaranteed, and when they arrived reversed the
+// bar stayed on screen with nothing able to clear it. One wrapper is one place to get
+// wrong.
+//
+// The label is set synchronously, before the first await, so a caller that does not await
+// can still be observed to have started.
+async function withBusy(label, fn) {
+  busyLabel.textContent = label;
+  busyEl.hidden = false;
+  progressEl.hidden = true; // indeterminate until something says otherwise
+  progressBar.style.width = "0%";
+  busy(true);
+  try {
+    return await fn();
+  } finally {
+    busyEl.hidden = true;
+    progressEl.hidden = true;
+    busy(false);
+  }
 }
 
 async function render(tree) {
@@ -203,9 +233,9 @@ function reportRepair(tree) {
 
 // load is the whole open sequence given something that produces a tree, so the
 // button and the headless handle below cannot drift apart.
-async function load(loader) {
+async function load(loader, label) {
   const previousId = currentTree && currentTree.root ? currentTree.root.id : null;
-  const tree = await loader();
+  const tree = await withBusy(label || "Loading the model", loader);
   if (!tree) return; // nothing open, nothing to show
   // A previous cut's warnings do not describe the model now being opened.
   clearMessages();
@@ -223,7 +253,7 @@ async function load(loader) {
 
 document.getElementById("open").addEventListener("click", async () => {
   try {
-    await load(() => OpenModel(repairOnLoad()));
+    await load(() => OpenModel(repairOnLoad()), "Opening a model");
   } catch (err) {
     statusEl.textContent = String(err);
   }
@@ -243,7 +273,8 @@ document.getElementById("open").addEventListener("click", async () => {
 window.app = {
   // repair defaults to whatever the checkbox says, so a driven load behaves as a
   // clicked one; pass it explicitly to test the other setting.
-  openPath: (path, repair = repairOnLoad()) => load(() => OpenPath(path, repair)),
+  openPath: (path, repair = repairOnLoad()) =>
+    load(() => OpenPath(path, repair), `Loading ${path.split("/").pop()}`),
   gizmoGroup,
   setExtent,
   planeInput,
@@ -262,10 +293,9 @@ window.app = {
 // both describe the model at its previous size, so both are redrawn afterwards.
 async function applyScale(factors) {
   clearMessages();
-  busy(true);
   try {
     const had = currentPlan.cuts.length;
-    const tree = await ScaleModel(factors);
+    const tree = await withBusy("Scaling the model", () => ScaleModel(factors));
     selectedPlan = null;
     await render(tree);
     showPlan(await Plan());
@@ -280,8 +310,6 @@ async function applyScale(factors) {
     }
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    busy(false);
   }
 }
 
@@ -385,10 +413,8 @@ document.getElementById("clear-plan").addEventListener("click", () => {
 executeBtn.addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
-  busy(true);
-  progress(true);
   try {
-    const out = await ExecutePlan();
+    const out = await withBusy("Cutting", ExecutePlan);
     await render(out.tree);
     showPlan(out.plan);
 
@@ -423,9 +449,6 @@ executeBtn.addEventListener("click", async () => {
     }
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    progress(false);
-    busy(false);
   }
 });
 
@@ -434,10 +457,10 @@ executeBtn.addEventListener("click", async () => {
 // answered from a browser tab, which is why the path-taking variant exists at all.
 async function exportPlates(path) {
   clearMessages();
-  busy(true);
-  progress(true);
   try {
-    const out = path ? await ExportPlatesTo(path, bedSpec()) : await ExportPlates(bedSpec());
+    const out = await withBusy("Working out orientations and writing the 3MF", () =>
+      path ? ExportPlatesTo(path, bedSpec()) : ExportPlates(bedSpec())
+    );
     if (out.cancelled) return out;
 
     message(`Wrote ${out.plates} plate(s) to ${out.path}.`, "ok");
@@ -456,9 +479,6 @@ async function exportPlates(path) {
   } catch (err) {
     message(String(err), "err");
     throw err;
-  } finally {
-    progress(false);
-    busy(false);
   }
 }
 
@@ -469,9 +489,8 @@ document.getElementById("do-plates").addEventListener("click", () => {
 document.getElementById("do-separate").addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
-  busy(true);
   try {
-    const out = await SeparateBodies(currentTree.selectedId);
+    const out = await withBusy("Separating bodies", () => SeparateBodies(currentTree.selectedId));
     await render(out.tree);
     // Separation is recorded as a plan entry, so the list has to be refreshed or it
     // would not show the step that just happened — and Cut now would look like it was
@@ -488,28 +507,22 @@ document.getElementById("do-separate").addEventListener("click", async () => {
     for (const w of out.warnings || []) message(w, "warn");
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    busy(false);
   }
 });
 
 undoBtn.addEventListener("click", async () => {
   clearMessages();
-  busy(true);
   try {
-    await render(await Undo());
+    await render(await withBusy("Undoing", Undo));
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    busy(false);
   }
 });
 
 exportBtn.addEventListener("click", async () => {
   clearMessages();
-  busy(true);
   try {
-    const out = await ExportAll();
+    const out = await withBusy("Exporting the parts", ExportAll);
     // ExportAll always resolves to a real object, never null — it signals a
     // dismissed folder dialog with a flag instead, so this cannot throw.
     if (out.cancelled) return;
@@ -519,19 +532,15 @@ exportBtn.addEventListener("click", async () => {
     }
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    busy(false);
   }
 });
 
 document.getElementById("do-autosplit").addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
-  busy(true);
-  progress(true);
   try {
     const before = currentPlan.cuts.length;
-    const plan = await PlanFitToPrinter(bedSpec());
+    const plan = await withBusy("Planning cuts to fit the printer", () => PlanFitToPrinter(bedSpec()));
     showPlan(plan);
     const added = plan.cuts.length - before;
     if (added === 0) {
@@ -541,8 +550,5 @@ document.getElementById("do-autosplit").addEventListener("click", async () => {
     }
   } catch (err) {
     message(String(err), "err");
-  } finally {
-    progress(false);
-    busy(false);
   }
 });
