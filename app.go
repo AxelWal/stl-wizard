@@ -116,6 +116,18 @@ func (a *App) OpenModel() (*TreeView, error) {
 	return a.loadPath(path)
 }
 
+// OpenPath loads an STL from a path, bypassing the native dialog.
+//
+// This exists so the UI can be driven without a human at the keyboard.
+// OpenModel's dialog belongs to the Wails window, so a browser tab pointed at
+// the dev server (see CLAUDE.md) makes it appear over there and waits forever
+// for an answer it cannot give. Everything past loading is identical, so this
+// one method is the difference between a headless browser reaching the cut
+// path and being stuck on an empty sidebar.
+func (a *App) OpenPath(path string) (*TreeView, error) {
+	return a.loadPath(path)
+}
+
 // loadPath is everything OpenModel does once a path is known, split out so it
 // can be tested without a dialog.
 func (a *App) loadPath(path string) (*TreeView, error) {

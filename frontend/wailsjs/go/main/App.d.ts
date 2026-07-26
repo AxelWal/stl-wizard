@@ -11,6 +11,8 @@ export function ExportAll():Promise<main.ExportOutcome>;
 
 export function OpenModel():Promise<main.TreeView>;
 
+export function OpenPath(arg1:string):Promise<main.TreeView>;
+
 export function Select(arg1:string):Promise<main.TreeView>;
 
 export function Undo():Promise<main.TreeView>;

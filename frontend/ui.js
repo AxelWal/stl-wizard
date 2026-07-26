@@ -1,7 +1,7 @@
 import { initViewer, showParts, frameAll } from "./viewer.js";
-import { OpenModel, Select, Cut, Undo, ExportAll, AutoSplit } from "./wailsjs/go/main/App.js";
+import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
-import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput } from "./gizmo.js";
+import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
 import { initPins, pinSpec, bedSpec, showPanels, reportPins } from "./pins.js";
 
@@ -107,22 +107,42 @@ async function render(tree) {
   statusEl.textContent = `${tree.modelName} — ${parts.length} part(s)`;
 }
 
+// load is the whole open sequence given something that produces a tree, so the
+// button and the headless handle below cannot drift apart.
+async function load(loader) {
+  const previousId = currentTree && currentTree.root ? currentTree.root.id : null;
+  const tree = await loader();
+  if (!tree) return; // nothing open, nothing to show
+  await render(tree);
+  // OpenModel returns the current view unchanged when the dialog is cancelled,
+  // so re-framing here would throw away a plane the user had just placed.
+  if (tree.root && tree.root.id !== previousId) {
+    frameAll();
+    showGizmo();
+  }
+}
+
 document.getElementById("open").addEventListener("click", async () => {
   try {
-    const previousId = currentTree && currentTree.root ? currentTree.root.id : null;
-    const tree = await OpenModel();
-    if (!tree) return; // nothing open, nothing to show
-    await render(tree);
-    // OpenModel returns the current view unchanged when the dialog is cancelled,
-    // so re-framing here would throw away a plane the user had just placed.
-    if (tree.root && tree.root.id !== previousId) {
-      frameAll();
-      showGizmo();
-    }
+    await load(OpenModel);
   } catch (err) {
     statusEl.textContent = String(err);
   }
 });
+
+// A handle for driving the window without a mouse — see CLAUDE.md. The native
+// file dialog cannot be answered from a browser tab, which otherwise leaves an
+// automated run stuck on an empty sidebar, unable to reach the cut at all.
+//
+// These are the same functions the click handlers call, deliberately: a headless
+// run has to exercise the real path, or it only proves that a parallel imitation
+// of the app works.
+window.app = {
+  openPath: (path) => load(() => OpenPath(path)),
+  gizmoGroup,
+  setExtent,
+  planeInput,
+};
 
 cutBtn.addEventListener("click", async () => {
   if (!currentTree) return;

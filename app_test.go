@@ -48,6 +48,21 @@ func TestLoadPathBuildsATree(t *testing.T) {
 	}
 }
 
+// OpenPath is what a headless browser uses instead of the native file dialog
+// (see CLAUDE.md), so it is the entry point every automated UI run depends on.
+// Deleting it would break that without breaking anything a Go test otherwise
+// covers, since loadPath itself would still be exercised.
+func TestOpenPathLoadsWithoutADialog(t *testing.T) {
+	app := NewApp()
+	view, err := app.OpenPath(writeFixture(t, "cube.stl", fixtures.Cube(10)))
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if view.ModelName != "cube.stl" || view.Root == nil || view.Root.Tris != 12 {
+		t.Errorf("OpenPath gave %+v, want cube.stl with a 12-triangle root", view)
+	}
+}
+
 func TestLoadPathReportsAnUnreadableFile(t *testing.T) {
 	app := NewApp()
 	if _, err := app.loadPath("/nonexistent/nope.stl"); err == nil {

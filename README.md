@@ -113,12 +113,14 @@ returned flagged, never silently.
 - Auto-split is axis-aligned only: a part that would fit the bed turned
   diagonally is split anyway, because rotating to fit is a packing problem
   and this is a splitter.
-- **The frontend has not been visually verified.** Every window-facing task
-  in this project was implemented, built, and covered as far as static
-  checks go, but no one has yet opened the window and driven it end to end.
-  The Go side is covered by `go test ./...`; the window is not. Work through
-  `docs/manual-verification.md` before relying on this application, and
-  before any release build.
+- **The frontend has been driven headlessly, not by hand.** The viewer, the
+  bounded cut, part selection, measurements, undo, pins, auto-split and the
+  error path have all been exercised in a real browser against the dev server
+  and produce correct results (see CLAUDE.md for the run). What no one has
+  tested is everything needing a pointing device: orbit, pan, zoom, dragging
+  the plane or its corner handles, and interrupting a drag mid-gesture. Those
+  are in `docs/manual-verification.md` and still want a human before a release
+  build.
 
 ## Testing
 

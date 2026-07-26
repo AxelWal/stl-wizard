@@ -5,10 +5,16 @@ The Go side is covered by `go test ./...`, including guard tests in
 section). The window itself is not covered by any automated test. Run this
 list before any release build, and after any change to `frontend/`.
 
-**As of this writing, no line in this checklist has been run.** Every
-frontend task in this project was implemented and built but never opened in
-a window. Treat this document as the outstanding work, not as a record of
-what already passed.
+Some of it is now covered from the other direction. The application has been
+driven headlessly in a browser against the dev server — see CLAUDE.md — which
+confirmed the viewer renders, the bounded cut is genuinely bounded, and
+measurements, selection, undo, pins, auto-split and the error path all behave.
+Lines below marked **[headless]** passed that way.
+
+**Every unmarked line remains unrun.** A headless browser has no pointer, so
+nothing about orbiting, dragging, or interrupting a gesture has been tested by
+anyone, and nothing has been opened in a slicer. Treat the unmarked lines as
+outstanding work.
 
 Prepare fixtures:
 
@@ -21,19 +27,19 @@ a system with webkit2gtk 4.0 instead of 4.1).
 
 ## Viewer
 
-- [ ] Open `u.stl`. The model appears, lit and shaded, filling the viewport.
+- [x] **[headless]** Open `u.stl`. The model appears, lit and shaded, filling the viewport.
 - [ ] Left-drag orbits. Wheel zooms. Right-drag pans.
 - [ ] Open `sphere.stl` afterwards. The U is gone and the sphere is framed;
       the viewport shows only the new model, not both.
 
 ## Gizmo
 
-- [ ] The plane appears across the model with a visible outline and a normal arrow.
+- [x] **[headless]** The plane appears across the model with a visible outline and a normal arrow.
 - [ ] Move mode drags the plane; the model stays still.
 - [ ] Rotate mode tilts the plane.
 - [ ] The camera does not orbit while a gizmo handle is being dragged.
 - [ ] Dragging a corner resizes the rectangle, and the Width/Height fields follow.
-- [ ] Typing in Width resizes the rectangle.
+- [x] **[headless]** Typing in Width resizes the rectangle.
 - [ ] Clear the Width field entirely (select all, delete) while typing. The
       rectangle does not vanish or corrupt; typing a new value recovers it
       cleanly.
@@ -46,17 +52,19 @@ a system with webkit2gtk 4.0 instead of 4.1).
 
 ## The bounded cut — the feature this application exists for
 
-- [ ] On `u.stl`, place the plane across the arms and shrink the rectangle to
-      cover only the left arm.
-- [ ] Cut. Two parts appear.
-- [ ] **The right arm is still attached to the base, at full height.**
+- [x] **[headless]** On `u.stl`, place the plane across the arms and shrink the
+      rectangle to cover only the left arm.
+- [x] **[headless]** Cut. Two parts appear.
+- [x] **[headless]** **The right arm is still attached to the base, at full
+      height.** Measured: 7500 mm³ over the full 30 × 40 × 10 envelope, against
+      1500 mm³ at 10 × 15 × 10 for the piece taken off.
 - [ ] Widen the rectangle to span both arms and cut again. Now both arms are cut.
 
 ## Parts and measurements
 
-- [ ] The parts list shows the tree, with split parts greyed and leaves clickable.
-- [ ] Clicking a leaf selects it; the viewport highlights it and dims the rest.
-- [ ] Measurements match what `cutdemo` reports for the same geometry.
+- [x] **[headless]** The parts list shows the tree, with split parts greyed and leaves clickable.
+- [x] **[headless]** Clicking a leaf selects it; the viewport highlights it and dims the rest.
+- [x] **[headless]** Measurements match what `cutdemo` reports for the same geometry.
 
 ## Honest reporting
 
@@ -72,7 +80,10 @@ a system with webkit2gtk 4.0 instead of 4.1).
 
 ## Alignment pins
 
-- [ ] Enable pins, cut a large model, and confirm the message reports how many were placed.
+- [x] **[headless]** Enable pins, cut a large model, and confirm the message
+      reports how many were placed. On `u.stl` this places 1 of the 4 requested
+      and says so; the socket removes 118 mm³ where the peg adds 100 mm³, which
+      is the clearance, and both pieces stay closed.
 - [ ] Export both pieces and open them in a slicer: one has raised pegs on the cut
       face, the other matching sockets, and both are watertight.
 - [ ] The pegs line up with the sockets — same count, same positions.
@@ -89,8 +100,10 @@ a system with webkit2gtk 4.0 instead of 4.1).
 
 ## Fit to printer
 
-- [ ] Enter a bed smaller than the model and click Split to fit. The parts list
-      grows and every piece reports dimensions within the bed.
+- [x] **[headless]** Enter a bed smaller than the model and click Split to fit. The
+      parts list grows and every piece reports dimensions within the bed. On
+      `u.stl` onto 20 × 20 × 20: 4 pieces, 2 × 2000 mm³ and 2 × 2500 mm³,
+      summing to the original 9000, none exceeding 20 mm, all closed.
 - [ ] Enter a bed larger than the model. Nothing happens and the message says so.
 - [ ] Undo repeatedly after an auto-split. Every cut it made undoes one at a time.
 - [ ] Enter a bed of 0. A readable error appears rather than a hang.
@@ -99,7 +112,8 @@ a system with webkit2gtk 4.0 instead of 4.1).
 
 - [ ] Cancelling the open dialog changes nothing and reports nothing.
 - [ ] Opening a non-STL file shows a readable error, not a stack trace.
-- [ ] Placing the plane entirely off the model and cutting shows a readable error.
+- [x] **[headless]** Placing the plane entirely off the model and cutting shows a
+      readable error, leaves the tree alone, and hides the progress bar again.
 - [ ] Undo with nothing to undo shows a readable error.
 - [ ] Start an export, then cancel the folder-choice dialog. Nothing happens
       and no error appears.

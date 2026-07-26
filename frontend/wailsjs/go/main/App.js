@@ -18,6 +18,10 @@ export function OpenModel() {
   return window['go']['main']['App']['OpenModel']();
 }
 
+export function OpenPath(arg1) {
+  return window['go']['main']['App']['OpenPath'](arg1);
+}
+
 export function Select(arg1) {
   return window['go']['main']['App']['Select'](arg1);
 }
