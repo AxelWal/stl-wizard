@@ -143,6 +143,21 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       implying a clean bill of health.
       *(Not automated: no fixture currently has that as its only fault.)*
 
+## Separate bodies
+
+- [x] **[auto]** Load `touchingcubes.stl` and press Separate bodies: two parts, each
+      `Closed: yes` where the pair was flagged, volumes still adding up. No geometry
+      moved to achieve that.
+- [x] **[auto]** Press it on an ordinary cube: it says the part is a single body and
+      leaves the tree alone.
+- [x] **[auto]** Press it on `hollowbox.stl`: one body, not a shell and a void.
+- [x] **[auto]** Undo after separating restores the single part.
+- [x] **[auto]** A separated body then cuts like any other part.
+- [ ] Separate a real multi-body download, export the bodies, and check in a slicer
+      that each is the solid you expected and none is inside out.
+      *(Bounding-box nesting is a heuristic: two interlocking parts whose boxes
+      contain one another could be grouped wrongly. No fixture reproduces that.)*
+
 ## Fit to printer
 
 - [x] **[auto]** Enter a bed smaller than the model and click Split to fit. Every

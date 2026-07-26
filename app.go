@@ -10,7 +10,9 @@ import (
 
 	"stl-cutter/internal/cut"
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/repair"
+	"stl-cutter/internal/shells"
 	"stl-cutter/internal/stl"
 )
 
@@ -84,6 +86,10 @@ type RepairView struct {
 	// their 22 non-manifold edges with them.
 	ShellsDropped    int `json:"shellsDropped"`
 	TrianglesRemoved int `json:"trianglesRemoved"`
+	// Bodies is how many disconnected solids the model holds. Free here because
+	// repair labels surfaces anyway; counting it on every load would cost a second
+	// full weld, about 20s on 1.75M triangles.
+	Bodies int `json:"bodies"`
 }
 
 // view snapshots the current tree for the frontend. Returns nil when nothing is
@@ -192,6 +198,7 @@ func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 				Before:            res.Before.String(),
 				After:             res.After.String(),
 				Closed:            res.After.OK(),
+				Bodies:            res.Bodies,
 				NonManifoldEdges:  res.NonManifoldEdges,
 				ShellsDropped:     res.ShellsDropped,
 				TrianglesRemoved:  res.TrianglesRemoved,
@@ -207,6 +214,75 @@ func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 		v.Repair = rv
 	}
 	return v, nil
+}
+
+// SeparateOutcome reports what separating a part into bodies found.
+type SeparateOutcome struct {
+	Tree   *TreeView `json:"tree"`
+	Bodies int       `json:"bodies"`
+	// Flagged names the bodies that are still not closed solids on their own, so a
+	// body broken in its own right is not hidden by the pieces around it improving.
+	Flagged  []string `json:"flagged"`
+	Warnings []string `json:"warnings"`
+}
+
+// SeparateBodies replaces a leaf with one part per disconnected body.
+//
+// An STL has no notion of a body, so a file holding several solids arrives as one
+// part and cuts and exports as one. This is the operation that fixes two solid
+// bodies touching along an edge, which repair cannot: separating them changes no
+// geometry at all, and each is then a closed solid.
+//
+// Finding one body is not an error. The button is cheap to press and the honest
+// answer is that there is nothing to do, so the tree is left alone and Bodies says
+// 1 — returning an error would make the common case look like a failure.
+func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
+	out := &SeparateOutcome{}
+	err := a.session.WithTree(func(tr *Tree) error {
+		part := tr.Find(partID)
+		if part == nil {
+			return fmt.Errorf("no part with id %q", partID)
+		}
+		if !part.IsLeaf() {
+			return fmt.Errorf("%q has already been split; select one of its pieces", part.Name)
+		}
+
+		eps := part.Mesh.Epsilon()
+		bodies := shells.Split(part.Mesh, eps)
+		out.Bodies = len(bodies)
+		if len(bodies) < 2 {
+			return nil
+		}
+
+		// Each body is checked in its own right. One that was flagged only because it
+		// touched its neighbour comes back sound; one broken on its own stays flagged,
+		// and has to keep saying so.
+		sound := make([]bool, len(bodies))
+		for i, b := range bodies {
+			sound[i] = meshcheck.Check(b, eps).OK()
+		}
+
+		kids, err := tr.SplitMany(partID, bodies, sound)
+		if err != nil {
+			return err
+		}
+		for i, k := range kids {
+			if !sound[i] {
+				out.Flagged = append(out.Flagged, k.Name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(out.Flagged) > 0 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf(
+			"%d of the %d bodies are not closed solids on their own: %s",
+			len(out.Flagged), out.Bodies, strings.Join(out.Flagged, ", ")))
+	}
+	out.Tree = a.view()
+	return out, nil
 }
 
 // PlaneInput is the gizmo's state as the frontend reports it. Arrays rather than

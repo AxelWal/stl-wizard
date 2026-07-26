@@ -13,6 +13,8 @@ U-shaped model without touching the other.
 - Optional repair as a model is loaded: closes holes and deletes the stray
   zero-volume debris a cut leaves behind, so a slightly broken file can be cut
   without every piece coming back flagged.
+- Separating a file's disconnected bodies into their own parts, so several solids
+  in one STL can be cut, measured and exported individually.
 
 ## Running
 
@@ -55,6 +57,7 @@ Exits non-zero if either resulting part is not a closed solid.
     internal/meshcheck   watertightness invariants
     internal/fixtures    procedurally generated test meshes
     internal/repair      closing holes and clearing debris
+    internal/shells      separating a mesh into its disconnected bodies
     cmd/cutdemo          cut a file from the command line
     cmd/meshrepair       report on and repair a file from the command line
     cmd/genfixture       write a fixture to a file
@@ -144,14 +147,32 @@ The volumes are identical to the digit. Repair changed nothing about the geometr
 that matters and turned two unprintable pieces into two printable ones, because the
 debris it removed was sitting on the cut path.
 
-Two faults it does **not** fix, and says so rather than implying otherwise:
+One fault it does **not** fix: **backwards-wound triangles.** Turning one around
+means propagating a consistent orientation across the whole surface, which is a
+different algorithm. The model comes back reported and otherwise untouched.
 
-- **Two solid bodies touching along an edge.** Both enclose volume, so neither is
-  debris; separating them would mean moving the user's geometry.
-- **Backwards-wound triangles.** Turning one around means propagating a consistent
-  orientation across the whole surface, which is a different algorithm.
+**Two solid bodies touching along an edge** used to be in that list. It is now
+handled by Separate bodies, below — no geometry has to move at all.
 
-Either way the model comes back reported and otherwise untouched. `cmd/meshrepair`
+## Separate bodies
+
+An STL is a bag of triangles with no notion of a body, so a file holding several
+solids arrives as one part and cuts and exports as one. **Separate bodies** gives
+each solid its own part. One real example: an exported part held two solids of
+578,016 and 572,593 mm³ presented as a single 1,150,609 mm³ part.
+
+It is also the fix for two bodies touching along an edge. Such a pair is one
+non-manifold mesh that repair cannot help with — both halves enclose volume, so
+neither is debris. Split apart, each is a closed solid, and nothing has been moved
+to achieve it.
+
+A hollow model stays one body. Its internal void is a separate inside-out surface,
+and handing that back as a body would give you a solid shell and an inside-out one,
+so a surface nested inside another is grouped with its container.
+
+Counting bodies costs a full weld of the mesh — about 20 seconds at 1.75M triangles
+— so it happens when you press the button rather than on every load. Repair labels
+surfaces anyway, so with repair on the load message names the count for free. `cmd/meshrepair`
 gives the same account from the command line, which is the practical way to check a
 large file:
 
@@ -207,7 +228,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-48 tests over every GUI feature, pointer input included. See CLAUDE.md.
+53 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

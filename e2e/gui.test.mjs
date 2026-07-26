@@ -544,11 +544,90 @@ test("a non-manifold model is told repair cannot help, not left guessing", async
   const msg = await app.messages();
   expect.contains(msg, "more than two triangles", "the kind of defect named");
   expect.contains(msg, "not a hole", "that it is not something filling addresses");
-  expect.contains(msg, "will not help", "that repeating the repair is pointless");
+  // The touching surfaces here are two separate bodies, so there IS a cure and the
+  // message has to name it rather than sending the user to another tool.
+  expect.contains(msg, "Separate bodies will fix it", "the operation that does fix it");
+  expect.contains(msg, "2 separate bodies", "the body count");
 
   const [part] = await app.parts();
-  expect.ok(!part.closed, "the part to still report Closed: no");
+  expect.ok(!part.closed, "the part to still report Closed: no until it is separated");
   expect.ok(part.flagged, "the part to still carry a ⚠");
+});
+
+group("separate bodies");
+
+test("two bodies touching along an edge separate into two sound parts", async (app) => {
+  await app.open("touchingcubes");
+  const [before] = await app.parts();
+  expect.ok(!before.closed, "the pair to load flagged, or this proves nothing");
+
+  const msg = await app.act("do-separate");
+  expect.contains(msg, "Separated into 2 bodies", "the result");
+
+  const parts = await app.parts();
+  expect.equal(parts.length, 2, "part count");
+  for (const p of parts) {
+    // Each cube was only ever non-manifold because it touched the other. Apart,
+    // each is a closed solid — and no geometry moved to achieve that.
+    expect.ok(p.closed, `${p.label} to be a closed solid on its own`);
+    expect.ok(!p.flagged, `${p.label} to have lost its ⚠`);
+    expect.near(p.volume, 8000, 1, `${p.label} to be a whole 20mm cube`);
+  }
+  expect.near(parts[0].volume + parts[1].volume, before.volume, 1, "the volumes to still add up");
+});
+
+test("a single-body part says so and is left alone", async (app) => {
+  await app.open("cube");
+  const msg = await app.act("do-separate");
+
+  expect.contains(msg, "single body", "the honest answer");
+  expect.equal((await app.parts()).length, 1, "the tree to be untouched");
+  expect.equal(await app.disabled("#do-undo"), true, "nothing to undo, because nothing happened");
+});
+
+test("a hollow model is one body, not a shell and a void", async (app) => {
+  // The inner surface of a hollow model is its own inside-out surface. Returning it
+  // as a body would hand the user a solid box and an inside-out box.
+  await app.open("hollowbox");
+  const [before] = await app.parts();
+
+  const msg = await app.act("do-separate");
+
+  expect.contains(msg, "single body", "a hollow model to count as one body");
+  const parts = await app.parts();
+  expect.equal(parts.length, 1, "part count");
+  expect.near(parts[0].volume, before.volume, 0.001, "the shell's volume to be unchanged");
+});
+
+test("undo puts a separated model back together", async (app) => {
+  await app.open("touchingcubes");
+  const [before] = await app.parts();
+
+  await app.act("do-separate");
+  expect.equal((await app.parts()).length, 2, "separated");
+
+  await app.undo();
+  const parts = await app.parts();
+  expect.equal(parts.length, 1, "back to one part");
+  expect.equal(parts[0].tris, before.tris, "the original triangle count");
+  expect.near(parts[0].volume, before.volume, 1, "the original volume");
+});
+
+test("a separated body can then be cut on its own", async (app) => {
+  await app.open("touchingcubes");
+  await app.act("do-separate");
+
+  // Select the first body and halve it. The point of separating is that the pieces
+  // are then ordinary parts.
+  await app.page.evaluate(() => {
+    const leaf = [...document.querySelectorAll("#tree .row")].filter((r) => !r.classList.contains("split"))[0];
+    leaf.click();
+  });
+  await app.placePlane({ position: [10, 10, 10], width: 200, height: 200 });
+  const msg = await app.cut();
+
+  expect.contains(msg, "closed solids", `the cut to succeed, got: ${msg}`);
+  expect.equal((await app.parts()).length, 3, "one body cut in two, plus the untouched body");
 });
 
 test("repair claims nothing on a model that does not need it", async (app) => {

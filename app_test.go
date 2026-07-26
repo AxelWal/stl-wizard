@@ -128,6 +128,118 @@ func TestOpenPathReportsNoRepairOnASoundMesh(t *testing.T) {
 	}
 }
 
+// Two bodies touching along one edge are one non-manifold mesh that repair is
+// documented as unable to fix. Separating them needs no geometry change, and each
+// is then a closed solid — which is the whole reason for the feature.
+func TestSeparateBodiesSplitsTouchingSolidsAndMakesBothSound(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "two.stl", fixtures.TouchingCubes(10)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if view.Root.Watertight {
+		t.Fatal("the fixture should load flagged, or this test proves nothing")
+	}
+
+	out, err := app.SeparateBodies(view.Root.ID)
+	if err != nil {
+		t.Fatalf("SeparateBodies: %v", err)
+	}
+	if out.Bodies != 2 {
+		t.Errorf("Bodies = %d, want 2", out.Bodies)
+	}
+	if len(out.Tree.Root.Children) != 2 {
+		t.Fatalf("got %d children, want 2", len(out.Tree.Root.Children))
+	}
+	for i, c := range out.Tree.Root.Children {
+		if !c.Watertight {
+			t.Errorf("body %d is flagged; separated bodies should each be sound", i)
+		}
+		if c.Volume < 999 || c.Volume > 1001 {
+			t.Errorf("body %d volume = %v, want about 1000", i, c.Volume)
+		}
+	}
+	if !out.Tree.CanUndo {
+		t.Error("a separation should be undoable")
+	}
+}
+
+// Pressing the button on an ordinary part must not be an error: it is cheap to
+// press and the honest answer is "there is only one body here".
+func TestSeparateBodiesReportsASingleBodyWithoutSplitting(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	out, err := app.SeparateBodies(view.Root.ID)
+	if err != nil {
+		t.Fatalf("SeparateBodies: %v", err)
+	}
+	if out.Bodies != 1 {
+		t.Errorf("Bodies = %d, want 1", out.Bodies)
+	}
+	if !out.Tree.Root.IsLeaf() {
+		t.Error("a single-body part must not be split")
+	}
+	if out.Tree.CanUndo {
+		t.Error("nothing happened, so there should be nothing to undo")
+	}
+}
+
+// A hollow model is one body: its internal void is a separate surface, and
+// returning it as a body would give a solid shell and an inside-out one.
+func TestSeparateBodiesKeepsAHollowModelWhole(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "hollow.stl", fixtures.HollowBox(geom.Vec3{20, 20, 20}, 2)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := view.Root.Volume
+
+	out, err := app.SeparateBodies(view.Root.ID)
+	if err != nil {
+		t.Fatalf("SeparateBodies: %v", err)
+	}
+	if out.Bodies != 1 {
+		t.Errorf("Bodies = %d, want 1 — the void is not a body", out.Bodies)
+	}
+	if math.Abs(out.Tree.Root.Volume-want) > 1e-9 {
+		t.Errorf("volume = %v, want the shell's %v", out.Tree.Root.Volume, want)
+	}
+}
+
+func TestSeparateBodiesRefusesAPartThatWasAlreadySplit(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "two.stl", fixtures.TouchingCubes(10)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.SeparateBodies(view.Root.ID); err != nil {
+		t.Fatalf("first separation: %v", err)
+	}
+	if _, err := app.SeparateBodies(view.Root.ID); err == nil {
+		t.Error("expected an error when separating a part that was already split")
+	}
+}
+
+// Repair labels surfaces anyway, so the body count is free there and the load-time
+// message can mention it without a second weld of the whole mesh.
+func TestRepairReportsTheBodyCount(t *testing.T) {
+	app := NewApp()
+	view, err := app.OpenPath(writeFixture(t, "two.stl", fixtures.TouchingCubes(10)), true)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if view.Repair == nil {
+		t.Fatal("no repair report")
+	}
+	if view.Repair.Bodies != 2 {
+		t.Errorf("Bodies = %d, want 2", view.Repair.Bodies)
+	}
+}
+
 func TestLoadPathReportsAnUnreadableFile(t *testing.T) {
 	app := NewApp()
 	if _, err := app.loadPath("/nonexistent/nope.stl", false); err == nil {

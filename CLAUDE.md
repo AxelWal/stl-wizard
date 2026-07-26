@@ -133,6 +133,7 @@ that produced the figures above.
     #progress          long-cut bar       #progress-bar    its fill
 
     #repair-on-load                       repair holes as the model loads
+    #do-separate                          split a part into its bodies
     #plane-width #plane-height            rectangle extent
     #mode-translate #mode-rotate          gizmo mode
     #pins-enabled #pins-count #pins-diameter #pins-length
@@ -155,7 +156,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 48
+    node e2e/gui.test.mjs              # all 53
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -264,8 +265,17 @@ would fill every hollow model solid.
 
 Fixtures: `openbox` a fillable rim, `cubewithflap` a fused zero-volume flap (what
 real cut output has), `touchingcubes` two real bodies sharing an edge (what repair
-cannot fix). Use `cmd/meshrepair` for anything large; pushing an 87MB file through
-the browser to find out whether it is even broken is the slow way round.
+cannot fix but Separate bodies can). Use `cmd/meshrepair` for anything large;
+pushing an 87MB file through the browser to find out whether it is even broken is
+the slow way round.
+
+**`internal/shells`** labels connected surfaces, joining only across edges shared by
+**exactly two** triangles — a non-manifold edge deliberately does not join, which is
+what makes two touching bodies separable. Nested surfaces are grouped with their
+container by bounding box, because a hollow model's void is its own surface and
+returning it as a body gives a solid shell and an inside-out one. `Tree.SplitMany`
+is the N-child version of `Split`; both go through `replaceLeaf`, and `undoStep`
+records only `{parent, mesh}` so undo never knew how many children there were.
 
 `docs/manual-verification.md` is what is left for a human: exported pins in a
 slicer, and a real model of a few hundred thousand triangles. Everything the

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"stl-cutter/internal/fixtures"
+	"stl-cutter/internal/stl"
 )
 
 func TestNewTreeHasASingleSelectableRoot(t *testing.T) {
@@ -75,6 +76,87 @@ func TestSplitReplacesALeafWithTwoChildren(t *testing.T) {
 	}
 	if tr.SelectedID != a.ID {
 		t.Errorf("SelectedID = %q, want the first child %q", tr.SelectedID, a.ID)
+	}
+}
+
+func TestSplitManyReplacesALeafWithOneChildPerMesh(t *testing.T) {
+	tr := NewTree("bodies.stl", fixtures.Cube(10))
+	rootID := tr.Root.ID
+
+	kids, err := tr.SplitMany(rootID,
+		[]*stl.Mesh{fixtures.Cube(5), fixtures.Cube(4), fixtures.Cube(3)},
+		[]bool{true, true, false})
+	if err != nil {
+		t.Fatalf("SplitMany: %v", err)
+	}
+	if len(kids) != 3 {
+		t.Fatalf("got %d children, want 3", len(kids))
+	}
+	if len(tr.Leaves()) != 3 {
+		t.Errorf("got %d leaves, want 3", len(tr.Leaves()))
+	}
+	// Numbered, so a name says which operation produced the part: cuts use a/b.
+	for i, want := range []string{"whole1", "whole2", "whole3"} {
+		if kids[i].Name != want {
+			t.Errorf("child %d is named %q, want %q", i, kids[i].Name, want)
+		}
+	}
+	seen := map[string]bool{}
+	for _, k := range kids {
+		if seen[k.ID] {
+			t.Errorf("duplicate id %q", k.ID)
+		}
+		seen[k.ID] = true
+	}
+	if kids[2].Watertight {
+		t.Error("the third mesh was passed as not watertight")
+	}
+	if tr.Root.Mesh != nil {
+		t.Error("a split parent should release its mesh")
+	}
+	if tr.SelectedID != kids[0].ID {
+		t.Errorf("SelectedID = %q, want the first child", tr.SelectedID)
+	}
+}
+
+// Undo records only the parent and its mesh, so it never knew how many children a
+// split made. One undo must put back a three-way separation just as it does a cut.
+func TestUndoRestoresAManyWaySplit(t *testing.T) {
+	tr := NewTree("bodies.stl", fixtures.Cube(10))
+	rootID := tr.Root.ID
+	if _, err := tr.SplitMany(rootID,
+		[]*stl.Mesh{fixtures.Cube(5), fixtures.Cube(4), fixtures.Cube(3)},
+		[]bool{true, true, true}); err != nil {
+		t.Fatalf("SplitMany: %v", err)
+	}
+
+	if err := tr.Undo(); err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if !tr.Root.IsLeaf() {
+		t.Error("the root should be a leaf again")
+	}
+	if tr.Root.Mesh == nil {
+		t.Fatal("the root's mesh was not restored")
+	}
+	if got := len(tr.Root.Mesh.Tris); got != 12 {
+		t.Errorf("restored mesh has %d triangles, want the original 12", got)
+	}
+	if tr.CanUndo() {
+		t.Error("one separation should leave nothing more to undo")
+	}
+}
+
+func TestSplitManyRefusesFewerThanTwoMeshes(t *testing.T) {
+	tr := NewTree("cube.stl", fixtures.Cube(10))
+	if _, err := tr.SplitMany(tr.Root.ID, []*stl.Mesh{fixtures.Cube(5)}, []bool{true}); err == nil {
+		t.Error("splitting a part into one piece should be refused, not recorded as a split")
+	}
+	if !tr.Root.IsLeaf() {
+		t.Error("a refused split must leave the tree alone")
+	}
+	if tr.CanUndo() {
+		t.Error("a refused split must not push undo history")
 	}
 }
 

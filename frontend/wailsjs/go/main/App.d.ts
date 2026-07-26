@@ -15,4 +15,6 @@ export function OpenPath(arg1:string,arg2:boolean):Promise<main.TreeView>;
 
 export function Select(arg1:string):Promise<main.TreeView>;
 
+export function SeparateBodies(arg1:string):Promise<main.SeparateOutcome>;
+
 export function Undo():Promise<main.TreeView>;

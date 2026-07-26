@@ -125,26 +125,59 @@ func (t *Tree) Leaves() []*Part {
 }
 
 // Split replaces the leaf id with two children carrying the given meshes.
+//
+// A cut's children are suffixed a and b; a separation's are numbered. The suffix
+// therefore says which operation produced a part.
 func (t *Tree) Split(id string, a, b *stl.Mesh, aWatertight, bWatertight bool) (*Part, *Part, error) {
+	kids, err := t.replaceLeaf(id, []*stl.Mesh{a, b}, []bool{aWatertight, bWatertight},
+		func(name string, i int) string { return name + string(rune('a'+i)) })
+	if err != nil {
+		return nil, nil, err
+	}
+	return kids[0], kids[1], nil
+}
+
+// SplitMany replaces the leaf id with one child per mesh, for separating a part
+// into its disconnected bodies.
+func (t *Tree) SplitMany(id string, meshes []*stl.Mesh, watertight []bool) ([]*Part, error) {
+	return t.replaceLeaf(id, meshes, watertight,
+		func(name string, i int) string { return fmt.Sprintf("%s%d", name, i+1) })
+}
+
+// replaceLeaf is the one path by which a leaf becomes a parent, so cuts and
+// separations cannot drift apart over id assignment, undo history or selection.
+//
+// It validates everything before mutating anything: a refused split must leave the
+// tree exactly as it was, with no half-built children and no undo entry that would
+// put back a mesh nothing had taken away.
+func (t *Tree) replaceLeaf(id string, meshes []*stl.Mesh, watertight []bool, name func(string, int) string) ([]*Part, error) {
+	if len(meshes) < 2 {
+		return nil, fmt.Errorf("a split needs at least two pieces, got %d", len(meshes))
+	}
+	if len(watertight) != len(meshes) {
+		return nil, fmt.Errorf("got %d meshes but %d watertight flags", len(meshes), len(watertight))
+	}
 	p := t.Find(id)
 	if p == nil {
-		return nil, nil, fmt.Errorf("no part with id %q", id)
+		return nil, fmt.Errorf("no part with id %q", id)
 	}
 	if !p.IsLeaf() {
-		return nil, nil, fmt.Errorf("part %q has already been split; select one of its pieces", p.Name)
+		return nil, fmt.Errorf("part %q has already been split; select one of its pieces", p.Name)
 	}
 
-	ca := t.newPart(p.Name+"a", a, aWatertight)
-	cb := t.newPart(p.Name+"b", b, bWatertight)
-	p.Children = []*Part{ca, cb}
+	kids := make([]*Part, 0, len(meshes))
+	for i, m := range meshes {
+		kids = append(kids, t.newPart(name(p.Name, i), m, watertight[i]))
+	}
+	p.Children = kids
 
 	// The parent's mesh moves into the history: it is what Undo puts back, and
 	// keeping it on the node as well would double the memory for every cut.
 	t.history = append(t.history, undoStep{parent: p, mesh: p.Mesh})
 	p.Mesh = nil
 
-	t.SelectedID = ca.ID
-	return ca, cb, nil
+	t.SelectedID = kids[0].ID
+	return kids, nil
 }
 
 // Undo reverses the most recent split.

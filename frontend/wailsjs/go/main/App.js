@@ -26,6 +26,10 @@ export function Select(arg1) {
   return window['go']['main']['App']['Select'](arg1);
 }
 
+export function SeparateBodies(arg1) {
+  return window['go']['main']['App']['SeparateBodies'](arg1);
+}
+
 export function Undo() {
   return window['go']['main']['App']['Undo']();
 }

@@ -201,6 +201,42 @@ func TestRepairDropsAZeroVolumeShell(t *testing.T) {
 	}
 }
 
+// Both rules at once, which is where they were found to conflict.
+//
+// A hollow model's void must survive, and debris inside the same bounding box must
+// go. Grouping surfaces with whatever box contains them before weighing satisfies
+// the first and breaks the second — it hides the flap behind the body's own volume —
+// and that is exactly the regression that stopped repair fixing the real files it
+// was written for.
+func TestRepairDropsDebrisInsideAHollowModelWithoutTouchingTheVoid(t *testing.T) {
+	m := fixtures.HollowBox(geom.Vec3{20, 20, 20}, 2)
+	want := m.Volume()
+	before := len(m.Tris)
+
+	// A zero-volume flap in the middle of the shell's bounding box, so nesting would
+	// fold it into the model if the weighing happened after grouping.
+	p := geom.Vec3{9, 9, 9}
+	q := geom.Vec3{11, 9, 9}
+	r := geom.Vec3{10, 11, 9}
+	flap := stl.Tri{A: p, B: q, C: r}
+	m.Tris = append(m.Tris, flap, flap.Reversed())
+
+	res := Repair(m, m.Epsilon())
+
+	if res.ShellsDropped != 1 {
+		t.Errorf("ShellsDropped = %d, want 1 — the flap is debris wherever it sits", res.ShellsDropped)
+	}
+	if len(m.Tris) != before {
+		t.Errorf("got %d triangles, want the shell's original %d", len(m.Tris), before)
+	}
+	if got := m.Volume(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("volume = %v, want the shell's %v — the void must survive", got, want)
+	}
+	if res.Bodies != 1 {
+		t.Errorf("Bodies = %d, want 1 — a hollow shell is one body", res.Bodies)
+	}
+}
+
 // The rule is "encloses nothing", not "is small". A hollow model's internal void
 // is a separate inside-out shell with negative volume; deleting those would fill
 // every hollow model solid.

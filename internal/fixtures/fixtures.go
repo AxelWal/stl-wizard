@@ -215,11 +215,14 @@ func TouchingCubes(size float64) *stl.Mesh {
 // than to fill or separate anything.
 func CubeWithFlap(size float64) *stl.Mesh {
 	m := Cube(size)
-	// Along the cube's bottom-front edge, sticking out into -Y where there is no
-	// material, so the flap cannot be mistaken for part of the solid.
+	// The tip points inward, so the flap lies wholly inside the cube's bounding
+	// box. That is where real debris sits, and it is the arrangement that catches
+	// code which groups a surface with whatever box contains it before deciding
+	// whether it encloses anything: an outward-pointing flap escapes such grouping
+	// by widening the box, and would let the bug through.
 	a := geom.Vec3{0, 0, 0}
 	b := geom.Vec3{size, 0, 0}
-	tip := geom.Vec3{size / 2, -size * 0.3, 0}
+	tip := geom.Vec3{size / 2, size * 0.3, 0}
 	front := stl.Tri{A: a, B: b, C: tip}
 	m.Tris = append(m.Tris, front, front.Reversed())
 	return m

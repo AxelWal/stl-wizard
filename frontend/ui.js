@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { initViewer, showParts, frameAll, cameraRef, controlsRef, domElement } from "./viewer.js";
-import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit } from "./wailsjs/go/main/App.js";
+import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit, SeparateBodies } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
@@ -145,17 +145,32 @@ function reportRepair(tree) {
     message(`Nothing to repair — ${r.before}. See below.`, "warn");
   }
 
+  if (r.bodies > 1) {
+    message(
+      `This model contains ${r.bodies} separate bodies — use Separate bodies to split them.`,
+      "ok"
+    );
+  }
+
   if (r.closed) return;
 
   // Naming the kind of defect is the difference between a user trying again and
   // a user knowing not to. Real exported models are almost always the
   // non-manifold case, which filling cannot touch.
   if (r.nonManifoldEdges) {
+    // Where the touching surfaces are separate bodies, Separate bodies is the fix:
+    // it changes no geometry and leaves each body a closed solid. Saying "repair
+    // cannot help" and stopping would send the user to another tool for something
+    // this application does in one click.
+    const cure =
+      r.bodies > 1
+        ? `Separate bodies will fix it: the touching surfaces are ${r.bodies} separate ` +
+          `solids, and split apart each one is a closed solid.`
+        : `Filling cannot fix that, so repairing again will not help. Most slicers still ` +
+          `print such a model; a mesh tool can separate the surfaces if yours refuses.`;
     message(
       `${r.nonManifoldEdges} edge(s) have more than two triangles meeting along them — ` +
-        `two surfaces touching, not a hole. Filling cannot fix that, so repairing again ` +
-        `will not help. Most slicers still print such a model; a mesh tool can separate ` +
-        `the surfaces if yours refuses.`,
+        `two surfaces touching, not a hole. ${cure}`,
       "warn"
     );
   } else {
@@ -242,6 +257,29 @@ cutBtn.addEventListener("click", async () => {
     message(String(err), "err");
   } finally {
     progress(false);
+    busy(false);
+  }
+});
+
+document.getElementById("do-separate").addEventListener("click", async () => {
+  if (!currentTree) return;
+  clearMessages();
+  busy(true);
+  try {
+    const out = await SeparateBodies(currentTree.selectedId);
+    await render(out.tree);
+
+    if (out.bodies < 2) {
+      message("This part is a single body — nothing to separate.", "ok");
+    } else {
+      message(`Separated into ${out.bodies} bodies.`, "ok");
+    }
+    // A body broken in its own right has to keep saying so, rather than being
+    // hidden by the pieces around it having improved.
+    for (const w of out.warnings || []) message(w, "warn");
+  } catch (err) {
+    message(String(err), "err");
+  } finally {
     busy(false);
   }
 });
