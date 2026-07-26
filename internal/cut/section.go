@@ -134,6 +134,12 @@ const bestCutSamples = 12
 // midpoint, so a waist a third of the way along beats a fat middle.
 //
 // ok is false when the part already fits or no position would leave both halves fitting.
+//
+// The returned rectangle is generous rather than bounded to the fragment, so a cut cannot
+// graze an edge and shed a sliver. That makes this safe to apply to the fragment it was
+// chosen for, and unsafe to replay against every leaf a plane crosses: it would strike
+// siblings. A planner using this has to record which fragment each cut belongs to — see
+// docs/superpowers/specs/2026-07-26-fit-strategy-design.md.
 func BestCut(m *stl.Mesh, bed Bed) (spec Spec, s Section, ok bool) {
 	if err := bed.Valid(); err != nil || len(m.Tris) == 0 {
 		return Spec{}, Section{}, false
@@ -201,8 +207,14 @@ func BestCut(m *stl.Mesh, bed Bed) (spec Spec, s Section, ok bool) {
 	return SpecFromNormal(centre, normal, w, h), best, true
 }
 
-// sectionExtent is the rectangle needed to span the box across the given axis, with a
-// margin so a cut cannot fall short of an edge.
+// sectionExtent is the rectangle spanning this fragment's own cross-section, plus a small
+// margin so the cut cannot fall short of an edge.
+//
+// Bounded to the fragment, deliberately, and not merely large enough. A plan is replayed
+// by applying each plane to every leaf its rectangle crosses, so an oversized rectangle
+// strikes siblings the cut was never meant for — planning then simulates one tree and
+// execution builds another, which left fragments above the bed. PlanAutoSplit bounds its
+// steps for the same reason.
 func sectionExtent(size geom.Vec3, axis int) (w, h float64) {
 	var other []float64
 	for i := 0; i < 3; i++ {
@@ -210,6 +222,10 @@ func sectionExtent(size geom.Vec3, axis int) (w, h float64) {
 			other = append(other, size[i])
 		}
 	}
+	// Generous, so a cut cannot graze an edge and shed a sliver. This is safe for a
+	// single cut applied to a known fragment; it is NOT safe for replaying a plan by
+	// applying each plane to every leaf it crosses, because it would strike siblings.
+	// See the note on BestCut.
 	return other[0] * 2, other[1] * 2
 }
 
