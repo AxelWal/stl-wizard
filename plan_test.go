@@ -8,6 +8,8 @@ import (
 
 	"stl-cutter/internal/cut"
 	"stl-cutter/internal/fixtures"
+	"stl-cutter/internal/geom"
+	"stl-cutter/internal/stl"
 )
 
 // acrossTheArms is the plane that cuts the U at y=25 spanning everything.
@@ -431,11 +433,6 @@ func TestPlanFitToPrinterProposesWithoutCutting(t *testing.T) {
 	if len(pv.Cuts) == 0 {
 		t.Fatal("no cuts were planned for a 30x40x10 model on a 20mm bed")
 	}
-	for i, c := range pv.Cuts {
-		if c.Target != "" {
-			t.Errorf("planned cut %d targets %q; auto-split entries apply to every piece they cross", i, c.Target)
-		}
-	}
 	if !app.view().Root.IsLeaf() {
 		t.Fatal("the model was cut; planning must only plan")
 	}
@@ -562,4 +559,117 @@ func hasVolume(tv *TreeView, want float64) bool {
 		}
 	}
 	return false
+}
+
+// The acceptance test both earlier attempts failed. Every piece must end up within the bed
+// and none may be a sliver.
+//
+// The first attempt dropped fragments BestCut declined, because it returns false both for a
+// part that already fits and for one it could not cut. The second bounded every rectangle
+// tightly enough to spare siblings during replay, and cuts then grazed their own edges into
+// 0.05mm slivers. Naming each cut's fragment is what makes a generous rectangle safe.
+func TestPlanFitToPrinterBringsEveryFragmentWithinTheBed(t *testing.T) {
+	cases := map[string]*stl.Mesh{
+		"u":         fixtures.UShape(10),
+		"cube":      fixtures.Cube(100),
+		"sphere":    fixtures.UVSphere(40, 24, 12),
+		"tube":      fixtures.Tube(30, 18, 90, 32),
+		"hollowbox": fixtures.HollowBox(geom.Vec3{90, 90, 90}, 5),
+	}
+	for name, m := range cases {
+		for _, bed := range []float64{60, 35} {
+			app := NewApp()
+			if _, err := app.loadPath(writeFixture(t, name+".stl", m), false); err != nil {
+				t.Fatalf("%s: load: %v", name, err)
+			}
+			pv, err := app.PlanFitToPrinter(cut.Bed{X: bed, Y: bed, Z: bed})
+			if err != nil {
+				t.Fatalf("%s bed %v: %v", name, bed, err)
+			}
+			if pv.StillTooBig > 0 {
+				t.Errorf("%s bed %v: %d fragment(s) reported as still too big", name, bed, pv.StillTooBig)
+			}
+			if len(pv.Cuts) > 0 {
+				if _, err := app.ExecutePlan(); err != nil {
+					t.Fatalf("%s bed %v: execute: %v", name, bed, err)
+				}
+			}
+
+			for _, size := range sizes(app.view()) {
+				biggest := 0.0
+				for _, d := range size {
+					if d > bed+0.001 {
+						t.Errorf("%s bed %v: a piece measures %v, above the bed", name, bed, size)
+					}
+					if d > biggest {
+						biggest = d
+					}
+				}
+				// A sliver: something with an extent thousands of times smaller than its
+				// longest. The tightly-bounded attempt produced 0.05mm pieces of a 90mm
+				// shell, which is what this catches.
+				for _, d := range size {
+					if biggest > 0 && d > 0 && d < biggest/500 {
+						t.Errorf("%s bed %v: a piece measures %v, which is a sliver", name, bed, size)
+					}
+				}
+			}
+		}
+	}
+}
+
+// Each planned cut must name the fragment it belongs to, which is what makes replay match
+// the simulation. The first entry names the root; later ones name pieces earlier cuts make.
+func TestPlanFitToPrinterNamesTheFragmentEachCutBelongsTo(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.ScaleModel([3]float64{20, 20, 20}); err != nil {
+		t.Fatalf("ScaleModel: %v", err)
+	}
+	pv, err := app.PlanFitToPrinter(cut.Bed{X: 200, Y: 200, Z: 200})
+	if err != nil {
+		t.Fatalf("PlanFitToPrinter: %v", err)
+	}
+	if len(pv.Cuts) < 2 {
+		t.Fatalf("got %d cuts, want at least 2", len(pv.Cuts))
+	}
+	if pv.Cuts[0].Target != "whole" {
+		t.Errorf("the first cut targets %q, want the root %q", pv.Cuts[0].Target, "whole")
+	}
+	// Every target must be the root or a name an earlier cut produces, or replay cannot
+	// find it.
+	available := map[string]bool{"whole": true}
+	for i, c := range pv.Cuts {
+		if !available[c.Target] {
+			t.Errorf("cut %d targets %q, which no earlier cut produces", i, c.Target)
+		}
+		available[c.Target+"a"] = true
+		available[c.Target+"b"] = true
+	}
+}
+
+// The reported problem, through the app: a plane through a wide part when a narrow one is
+// available. The ends are unequal so the bounding box midpoint falls inside a fat end.
+func TestPlanFitToPrinterCutsTheNarrowPlace(t *testing.T) {
+	a := fixtures.Box(geom.Vec3{0, 0, 0}, geom.Vec3{60, 50, 50})
+	bar := fixtures.Box(geom.Vec3{60, 22, 22}, geom.Vec3{100, 28, 28})
+	b := fixtures.Box(geom.Vec3{100, 0, 0}, geom.Vec3{160, 50, 50})
+	m := &stl.Mesh{Tris: append(append(append([]stl.Tri{}, a.Tris...), bar.Tris...), b.Tris...)}
+
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "barbell.stl", m), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	pv, err := app.PlanFitToPrinter(cut.Bed{X: 110, Y: 100, Z: 100})
+	if err != nil {
+		t.Fatalf("PlanFitToPrinter: %v", err)
+	}
+	if len(pv.Cuts) != 1 {
+		t.Fatalf("got %d cuts, want 1", len(pv.Cuts))
+	}
+	if x := pv.Cuts[0].Plane.Origin[0]; x < 60 || x > 100 {
+		t.Errorf("the cut is at x=%v, outside the thin bar at 60..100", x)
+	}
+	if pv.Crowded != 0 {
+		t.Errorf("Crowded = %d; cutting the bar crosses the model in one place", pv.Crowded)
+	}
 }

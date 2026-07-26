@@ -31,7 +31,21 @@ tube's annulus subtracts its own bore; and a barbell with deliberately unequal e
 the bounding box's midpoint falls inside a fat end — is still cut on the thin bar, area 36
 against 2500.
 
-## Not done: the planner, and exactly why
+## Done: the planner
+
+`planToFit` in `app.go` cuts as it plans — `BestCut` scores where a plane really
+crosses a fragment, so it needs the fragment rather than a predicted box — and records the
+**name** of the fragment each cut belongs to. `PlanFitToPrinter` puts that name in the
+entry's `Target`, so replay cuts the one part the cut was chosen for. Breadth first, so a
+fragment's cut is always recorded after the cut that creates it.
+
+Fragments `BestCut` declines fall back to halving via `PlanAutoSplit`. `bed.Fits` is
+checked first and separately, because `BestCut` returns false both for a part that already
+fits and for one it could not cut; conflating those is what dropped fragments. What nothing
+can divide is counted in `StillTooBig`, and cuts crossing in more than one place in
+`Crowded`; both are reported in the UI rather than passed over in silence.
+
+### The two attempts this replaced, and exactly why they failed
 
 Two attempts, both reverted rather than shipped. The blocker is not the scoring.
 
@@ -51,7 +65,7 @@ every leaf is not the same computation:
 
 There is no margin that satisfies both, because the two requirements pull opposite ways.
 
-**The fix is architectural, not a margin.** The simulation knows which fragment each cut
+**The fix was architectural, not a margin.** The simulation knows which fragment each cut
 belongs to, and part naming is deterministic — `whole`, `wholea`, `wholeb`, and so on — so
 each planned entry can record its fragment's **name** in `Target`, exactly as a manual cut
 does. Replay then applies each cut to the one part it was chosen for, matching the
@@ -78,3 +92,19 @@ Scoring is a pass over the fragment per candidate position, twelve positions per
 90mm hollow shell onto a 35mm bed took about four minutes to plan. That is the price of
 looking at the model, and it belongs behind the busy indicator; it is also why the sweep
 above should stay modest in the tests.
+
+## Verified
+
+`TestPlanFitToPrinterBringsEveryFragmentWithinTheBed` plans and executes five shapes onto
+60mm and 35mm beds and asserts every piece is within the bed and none is a sliver — the test
+both attempts failed. Alongside it: every target is the root or a name an earlier cut
+produces, the barbell is cut on its bar through the app, and the same assertions run through
+the GUI in `e2e/gui.test.mjs`.
+
+Each was mutation-tested. Dropping the `Target` reproduces the first attempt's slivers
+exactly; removing the halving fallback leaves a sphere at 80mm on a 35mm bed; skipping the
+`Fits` check reports 56 undivided fragments. Tightening `sectionExtent` to the 2% margin of
+the second attempt now changes nothing — with each cut aimed at a known fragment a tight
+rectangle is sufficient, which is why that attempt's slivers were a symptom of the missing
+target rather than of the margin. Shrinking it *below* the cross-section fails loudly, so
+the assertion is discriminating rather than blind.

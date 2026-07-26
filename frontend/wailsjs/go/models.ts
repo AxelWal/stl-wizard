@@ -373,6 +373,8 @@ export namespace main {
 	}
 	export class PlanView {
 	    cuts: PlannedCut[];
+	    crowded: number;
+	    stillTooBig: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PlanView(source);
@@ -381,6 +383,8 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.cuts = this.convertValues(source["cuts"], PlannedCut);
+	        this.crowded = source["crowded"];
+	        this.stillTooBig = source["stillTooBig"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

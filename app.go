@@ -317,6 +317,10 @@ func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
 // PlanView is the cut plan as the frontend sees it.
 type PlanView struct {
 	Cuts []PlannedCut `json:"cuts"`
+	// Crowded counts planned cuts crossing the model in more than one place, and
+	// StillTooBig counts fragments nothing could divide. Set only by PlanFitToPrinter.
+	Crowded     int `json:"crowded"`
+	StillTooBig int `json:"stillTooBig"`
 }
 
 // planView snapshots the plan. Copied rather than aliased for the same reason
@@ -367,28 +371,111 @@ func (a *App) PlanFitToPrinter(bed cut.Bed) (*PlanView, error) {
 	if err := bed.Valid(); err != nil {
 		return nil, err
 	}
-	var steps []cut.AutoSplitStep
+	var plan fitPlan
 	err := a.session.WithTree(func(tr *Tree) error {
-		var err error
-		steps, err = cut.PlanAutoSplit(tr.Root.Mesh, bed)
 		if tr.Root.Mesh == nil {
 			return errors.New("the model has already been cut; undo first, or clear the plan and start again")
 		}
-		return err
+		plan = planToFit(tr.Root.Mesh, tr.Root.Name, bed)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	err = a.session.WithPlan(func(p *Plan) error {
-		for _, s := range steps {
-			p.Add(PlannedCut{Plane: planeFromSpec(s.Spec)})
+		for _, s := range plan.cuts {
+			p.Add(PlannedCut{Plane: planeFromSpec(s.spec), Target: s.target})
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return a.planView(), nil
+	v := a.planView()
+	v.Crowded, v.StillTooBig = plan.crowded, plan.stillTooBig
+	return v, nil
+}
+
+// plannedFit is one cut and the fragment it belongs to, by name.
+type plannedFit struct {
+	spec   cut.Spec
+	target string
+}
+
+type fitPlan struct {
+	cuts []plannedFit
+	// crowded counts cuts crossing the model in more than one place. Still planned — a
+	// branched model may have nowhere clean to cut — but worth looking at before printing.
+	crowded int
+	// stillTooBig counts fragments nothing could divide.
+	stillTooBig int
+}
+
+// planToFit works out the cuts needed to bring a model within the bed, choosing each one
+// by looking at the geometry rather than by halving a bounding box.
+//
+// It cuts as it plans, because cut.BestCut scores where a plane actually crosses the model
+// and so needs the real fragment rather than a predicted box. That is the whole point:
+// halving a box put a plane through the middle of a foot when the ankle a little further up
+// is a fraction of the cross-section. The cutting done here is thrown away; only the specs
+// and the names survive.
+//
+// Every cut records the NAME of the fragment it belongs to, and this is the part that took
+// two attempts to get right. A plan is replayed by applying each entry to every leaf its
+// rectangle crosses, so with no target a generous rectangle strikes siblings it was never
+// meant for — a 90mm shell on a 35mm bed came back with 45mm pieces — while a rectangle
+// bounded tightly enough to spare them grazes its own edges into slivers. No margin
+// satisfies both. Naming the fragment sidesteps it: replay cuts the one part the cut was
+// chosen for, so the rectangle may be as generous as it needs to be.
+//
+// The names mirror Tree.Split exactly — first piece "a", second "b" — so a name computed
+// here identifies the same part when the plan runs. Breadth first, so a fragment's cut is
+// always recorded after the cut that creates it.
+func planToFit(root *stl.Mesh, rootName string, bed cut.Bed) fitPlan {
+	type frag struct {
+		mesh *stl.Mesh
+		name string
+	}
+	var out fitPlan
+	pending := []frag{{root, rootName}}
+
+	for len(pending) > 0 && len(out.cuts) < maxAutoSplitCuts {
+		f := pending[0]
+		pending = pending[1:]
+		if bed.Fits(f.mesh.BBox()) {
+			continue // this fragment is done
+		}
+
+		spec, sec, ok := cut.BestCut(f.mesh, bed)
+		if !ok {
+			// Nothing scored, so fall back to halving the worst axis. BestCut returns
+			// false both for a part that already fits and for one it could not place a cut
+			// on; the Fits check above tells them apart, so reaching here means a fragment
+			// that does not fit and must still be divided rather than dropped.
+			steps, err := cut.PlanAutoSplit(f.mesh, bed)
+			if err != nil || len(steps) == 0 {
+				out.stillTooBig++
+				continue
+			}
+			spec, sec = steps[0].Spec, cut.Section{Loops: 1}
+		}
+
+		res, err := cut.Split(f.mesh, spec)
+		if err != nil {
+			out.stillTooBig++
+			continue
+		}
+		out.cuts = append(out.cuts, plannedFit{spec: spec, target: f.name})
+		if sec.Loops > 1 {
+			out.crowded++
+		}
+		pending = append(pending,
+			frag{res.Part1, f.name + "a"},
+			frag{res.Part2, f.name + "b"})
+	}
+	// Anything still queued when the cap was reached does not fit.
+	out.stillTooBig += len(pending)
+	return out
 }
 
 func (a *App) RenamePlane(id, name string) (*PlanView, error) {

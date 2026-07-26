@@ -571,6 +571,21 @@ document.getElementById("do-autosplit").addEventListener("click", async () => {
     } else {
       message(`Planned ${added} cut(s). Nothing is cut until you press Cut now.`, "ok");
     }
+    // The planner takes the best cut available, which is not always a clean one. Say so
+    // rather than let a branched model look like it planned perfectly.
+    if (plan.crowded > 0) {
+      message(
+        `${plan.crowded} of those cut(s) cross the model in more than one place. ` +
+          `There was nowhere to sever it in a single line.`,
+        "warn",
+      );
+    }
+    if (plan.stillTooBig > 0) {
+      message(
+        `${plan.stillTooBig} piece(s) will still be larger than the bed; nothing could divide them.`,
+        "warn",
+      );
+    }
   } catch (err) {
     message(String(err), "err");
   }

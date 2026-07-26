@@ -683,12 +683,48 @@ test("fit to printer proposes a plan and cuts nothing yet", async (app) => {
 
   const plan = await app.plan();
   expect.ok(plan.cuts.length >= 3, `several planned cuts, got ${plan.cuts.length}`);
-  for (const c of plan.cuts) {
-    expect.equal(c.target, "", "auto-split entries apply wherever their rectangle lands");
-  }
 
   await app.execute();
   expect.ok((await app.parts()).length >= 4, "executing produces the pieces");
+});
+
+// The reported bug, end to end: fit to printer used to leave pieces above the bed, because
+// each planned cut applied to every piece its rectangle crossed rather than to the piece it
+// was chosen for. Every cut now names its fragment.
+test("fit to printer brings every piece within the bed", async (app) => {
+  await app.open("u");
+  await app.scale({ mm: true, uniform: false, x: 600, y: 800, z: 200 });
+  await app.setBed({ x: 256, y: 256, z: 256 });
+
+  await app.planFitToPrinter();
+  const plan = await app.plan();
+  expect.ok(plan.cuts.length > 0, "cuts were planned");
+  expect.equal(plan.cuts[0].target, "whole", "the first cut names the root");
+  // Every target must be the root or a name an earlier cut produces, or Cut now cannot
+  // find the piece the cut was chosen for.
+  const available = new Set(["whole"]);
+  for (const c of plan.cuts) {
+    expect.ok(available.has(c.target), `cut targets ${c.target}, which no earlier cut makes`);
+    available.add(c.target + "a");
+    available.add(c.target + "b");
+  }
+
+  await app.execute();
+  const parts = await app.parts();
+  expect.ok(parts.length > 1, "the model was cut into pieces");
+  for (const p of parts) {
+    const dims = (p.size.match(/[\d.]+/g) || []).map(Number);
+    expect.equal(dims.length, 3, `three dimensions in ${p.size}`);
+    for (const d of dims) {
+      expect.ok(d <= 256.5, `${p.label} measures ${p.size}, above the 256mm bed`);
+    }
+    // A sliver: an extent hundreds of times smaller than the longest. Bounding each
+    // rectangle tightly enough to spare siblings produced exactly these.
+    const biggest = Math.max(...dims);
+    for (const d of dims) {
+      expect.ok(d === 0 || d > biggest / 500, `${p.label} measures ${p.size}, a sliver`);
+    }
+  }
 });
 
 // Cut now rebuilds the tree from the plan, so a separation made outside the plan would
