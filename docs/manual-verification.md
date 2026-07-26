@@ -57,6 +57,8 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Plan fit to printer proposes and cuts nothing until Cut now.
 - [x] **[auto]** Separating bodies is recorded as an entry and survives Cut now.
 - [x] **[auto]** Clearing the plan, and loading a model, both empty the list.
+- [x] **[auto]** Dragging an entry reorders the plan, every entry survives the move, and
+      the new order changes what the plan produces.
 - [ ] Run a fifty-entry plan on a large model and watch the progress bar. *(Cut now
       re-cuts from scratch, so this is minutes; no fixture is large enough to make the
       wait realistic.)*

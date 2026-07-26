@@ -62,9 +62,64 @@ export function renderPlan(container, plan, selectedID, on) {
       on.remove(cut.id);
     });
 
+    // Dragging reorders, and order decides what each entry has to cut, so this
+    // changes results rather than only the display.
+    //
+    // draggable goes on the row, not the name: the name is contenteditable, and a
+    // draggable contenteditable cannot be selected with the mouse at all — the drag
+    // wins over the caret.
+    row.draggable = true;
+    row.dataset.id = cut.id;
+    row.addEventListener("dragstart", (e) => {
+      dragging = cut.id;
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox refuses to start a drag without data set.
+      e.dataTransfer.setData("text/plain", cut.id);
+    });
+    row.addEventListener("dragend", () => {
+      dragging = null;
+      container.querySelectorAll(".drop-before, .drop-after").forEach((el) =>
+        el.classList.remove("drop-before", "drop-after")
+      );
+    });
+    row.addEventListener("dragover", (e) => {
+      if (dragging === null || dragging === cut.id) return;
+      e.preventDefault(); // without this the drop never fires
+      const box = row.getBoundingClientRect();
+      const after = e.clientY > box.top + box.height / 2;
+      row.classList.toggle("drop-after", after);
+      row.classList.toggle("drop-before", !after);
+    });
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-before", "drop-after");
+    });
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (dragging === null || dragging === cut.id) return;
+      const box = row.getBoundingClientRect();
+      const after = e.clientY > box.top + box.height / 2;
+      on.reorder(orderWith(plan, dragging, cut.id, after));
+      dragging = null;
+    });
+
     row.append(tick, name, what, del);
     row.addEventListener("click", () => on.select(cut.id));
     li.appendChild(row);
     container.appendChild(li);
   }
+}
+
+// dragging is the id being moved. Module state rather than dataTransfer, because
+// dataTransfer.getData is empty during dragover in every browser — the data is only
+// readable on drop — and the insertion marker has to be drawn while dragging over.
+let dragging = null;
+
+// orderWith returns the ids in the order they would be after moving one entry to just
+// before or after another. Exported for the test, which asserts the arithmetic without
+// having to simulate a drag.
+export function orderWith(plan, movedID, overID, after) {
+  const ids = plan.cuts.map((c) => c.id).filter((id) => id !== movedID);
+  const at = ids.indexOf(overID);
+  ids.splice(after ? at + 1 : at, 0, movedID);
+  return ids;
 }

@@ -409,6 +409,15 @@ func (a *App) UpdatePlane(id string, p PlaneInput, pins cut.PinSpec) (*PlanView,
 	return a.planView(), nil
 }
 
+// ReorderPlan rearranges the plan. Order decides what each entry has to cut, so this
+// changes results and not merely the display.
+func (a *App) ReorderPlan(ids []string) (*PlanView, error) {
+	if err := a.session.WithPlan(func(p *Plan) error { return p.Reorder(ids) }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
 func (a *App) ClearPlan() (*PlanView, error) {
 	if err := a.session.WithPlan(func(p *Plan) error { p.Clear(); return nil }); err != nil {
 		return nil, err

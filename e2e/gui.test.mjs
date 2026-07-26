@@ -376,6 +376,65 @@ test("separating bodies is recorded in the plan and survives Cut now", async (ap
   for (const p of parts) expect.ok(p.closed, `${p.label} to be closed`);
 });
 
+// A real HTML5 drag through the browser, not a synthetic call to the handler: the
+// handler being right is worth little if draggable, dragover's preventDefault or the
+// drop never fire.
+test("dragging a planned cut reorders the plan", async (app) => {
+  await app.open("u");
+  for (const y of [20, 25, 30]) {
+    await app.planeAcrossTheArms({ position: [15, y, 5], width: 200, height: 200 });
+    await app.addPlane();
+  }
+  expect.equal((await app.planNames()).join(","), "Cut 1,Cut 2,Cut 3", "the starting order");
+
+  // Drag the first row onto the last one. Playwright drives Chromium's own drag.
+  await app.page.dragAndDrop("#plan li:nth-child(1) .row", "#plan li:nth-child(3) .row");
+  await app.page.waitForFunction(
+    () => window.app.plan().cuts.map((c) => c.name).join(",") !== "Cut 1,Cut 2,Cut 3",
+    null,
+    { timeout: 5000 }
+  );
+
+  const after = (await app.planNames()).join(",");
+  expect.ok(
+    after === "Cut 2,Cut 3,Cut 1" || after === "Cut 2,Cut 1,Cut 3",
+    `Cut 1 to have moved down, got ${after}`
+  );
+  // Every entry has to survive the move: a reorder that loses or duplicates one would
+  // silently drop a cut from the plan.
+  expect.equal((await app.plan()).cuts.length, 3, "all three entries survive");
+});
+
+// Order decides what each entry has to cut, so a reorder changes results rather than
+// only the display. Cut 2 aims at a piece Cut 1 produces; moved first it has nothing.
+test("reordering changes what a plan produces", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  await app.execute();
+
+  // Select a piece the first cut made and plan a cut on it.
+  await app.page.evaluate(() => {
+    const leaf = [...document.querySelectorAll("#tree .row")].filter((r) => !r.classList.contains("split"))[0];
+    leaf.click();
+  });
+  await app.planeAcrossTheArms({ position: [15, 32, 5], width: 200, height: 200 });
+  await app.addPlane();
+
+  const inOrder = await app.execute();
+  expect.contains(inOrder, "Made 2 cut(s)", "both run in the planned order");
+  expect.absent(inOrder, "Skipped", "nothing is skipped in order");
+
+  // Reverse them. The second entry now runs before the part it names exists.
+  await app.page.evaluate(async () => {
+    const ids = window.app.plan().cuts.map((c) => c.id);
+    await window.app.reorderPlan([ids[1], ids[0]]);
+  });
+  const reversed = await app.execute();
+  expect.contains(reversed, "Made 1 cut(s)", "only one can run reversed");
+  expect.contains(reversed, "Skipped", "and the other is named, not quietly dropped");
+});
+
 test("clearing the plan empties the list", async (app) => {
   await app.open("u");
   await app.planeAcrossTheArms(U_LEFT_ARM);

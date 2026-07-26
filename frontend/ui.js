@@ -4,7 +4,7 @@ import {
   OpenModel, OpenPath, Select, Undo, ExportAll, SeparateBodies,
   ExportPlates, ExportPlatesTo,
   AddPlane, UpdatePlane, RenamePlane, DeletePlane, SetPlaneEnabled, ClearPlan,
-  PlanFitToPrinter, ExecutePlan, Plan,
+  PlanFitToPrinter, ExecutePlan, Plan, ReorderPlan,
 } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
@@ -247,6 +247,7 @@ window.app = {
   exportPlates,
   plan: () => currentPlan,
   selectPlanned,
+  reorderPlan: async (ids) => showPlan(await ReorderPlan(ids)),
   mode,
   camera: cameraRef,
   controls: controlsRef,
@@ -271,6 +272,7 @@ function showPlan(plan) {
     remove: (id) => planCommand(() => DeletePlane(id)),
     toggle: (id, on) => planCommand(() => SetPlaneEnabled(id, on)),
     select: (id) => selectPlanned(id),
+    reorder: (ids) => planCommand(() => ReorderPlan(ids)),
   });
 }
 

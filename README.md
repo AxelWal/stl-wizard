@@ -214,8 +214,9 @@ and named**, never quietly dropped.
 Separating bodies is an entry too. It has to be: rebuilding from the plan would
 otherwise throw a separation away the next time Cut now ran.
 
-Not implemented: reordering entries. Order comes out of how you add them, and
-delete-and-re-add covers it.
+Entries can be dragged to reorder. That changes results rather than only the display:
+an entry aimed at a piece an earlier entry produces has nothing to cut if moved above
+it, and is reported as skipped.
 
 ## Printer sizes
 
@@ -334,7 +335,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-71 tests over every GUI feature, pointer input included. See CLAUDE.md.
+73 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

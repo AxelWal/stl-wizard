@@ -116,6 +116,33 @@ func (p *Plan) Update(id string, plane PlaneInput, pins cut.PinSpec) error {
 	return nil
 }
 
+// Reorder rearranges the plan to the given order of ids.
+//
+// The whole order is sent rather than "move this one to index n" because order is what
+// the caller is editing: a drag produces a new arrangement, and validating that against
+// the set it started from catches a stale list — one built before a delete landed —
+// instead of silently reordering into something the user never saw.
+func (p *Plan) Reorder(ids []string) error {
+	if len(ids) != len(p.Cuts) {
+		return fmt.Errorf("got %d ids for %d planned cuts; the list is out of date", len(ids), len(p.Cuts))
+	}
+	byID := make(map[string]PlannedCut, len(p.Cuts))
+	for _, c := range p.Cuts {
+		byID[c.ID] = c
+	}
+	out := make([]PlannedCut, 0, len(ids))
+	for _, id := range ids {
+		c, ok := byID[id]
+		if !ok {
+			return fmt.Errorf("no planned cut with id %q", id)
+		}
+		delete(byID, id) // a repeated id would otherwise duplicate an entry and lose another
+		out = append(out, c)
+	}
+	p.Cuts = out
+	return nil
+}
+
 func (p *Plan) Clear() {
 	p.Cuts = nil
 	// nextNum is not reset: a plan cleared and refilled against the same model should

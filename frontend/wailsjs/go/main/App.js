@@ -58,6 +58,10 @@ export function RenamePlane(arg1, arg2) {
   return window['go']['main']['App']['RenamePlane'](arg1, arg2);
 }
 
+export function ReorderPlan(arg1) {
+  return window['go']['main']['App']['ReorderPlan'](arg1);
+}
+
 export function Select(arg1) {
   return window['go']['main']['App']['Select'](arg1);
 }

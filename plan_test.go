@@ -318,6 +318,98 @@ func TestAnEntryWhoseTargetIsGoneIsReported(t *testing.T) {
 	}
 }
 
+func TestReorderRearrangesThePlan(t *testing.T) {
+	app := loadU(t)
+	for i := 0; i < 3; i++ {
+		if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+			t.Fatalf("AddPlane: %v", err)
+		}
+	}
+	ids := []string{}
+	for _, c := range app.Plan().Cuts {
+		ids = append(ids, c.ID)
+	}
+
+	pv, err := app.ReorderPlan([]string{ids[2], ids[0], ids[1]})
+	if err != nil {
+		t.Fatalf("ReorderPlan: %v", err)
+	}
+	got := []string{}
+	for _, c := range pv.Cuts {
+		got = append(got, c.Name)
+	}
+	if strings.Join(got, ",") != "Cut 3,Cut 1,Cut 2" {
+		t.Errorf("order is %v, want Cut 3,Cut 1,Cut 2", got)
+	}
+}
+
+// Order decides what each entry has to cut, so reordering changes results rather than
+// only the display. Cut 2 aims at a piece Cut 1 produces; run first, it has nothing.
+func TestReorderChangesWhatGetsCut(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("first AddPlane: %v", err)
+	}
+	if _, err := app.ExecutePlan(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	child := app.view().Root.Children[0]
+	if _, err := app.Select(child.ID); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if _, err := app.AddPlane(acrossTheArms(), cut.PinSpec{}); err != nil {
+		t.Fatalf("second AddPlane: %v", err)
+	}
+
+	out, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute in order: %v", err)
+	}
+	if out.CutsMade != 2 || len(out.Skipped) != 0 {
+		t.Fatalf("in order: %d cuts, skipped %v; want 2 and none", out.CutsMade, out.Skipped)
+	}
+
+	ids := []string{app.Plan().Cuts[0].ID, app.Plan().Cuts[1].ID}
+	if _, err := app.ReorderPlan([]string{ids[1], ids[0]}); err != nil {
+		t.Fatalf("ReorderPlan: %v", err)
+	}
+	out, err = app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute reversed: %v", err)
+	}
+	if len(out.Skipped) != 1 {
+		t.Errorf("reversed: skipped %v, want the entry whose target does not exist yet", out.Skipped)
+	}
+	if out.CutsMade != 1 {
+		t.Errorf("reversed: %d cuts made, want 1", out.CutsMade)
+	}
+}
+
+// A list built before a delete landed would reorder into something never seen.
+func TestReorderRefusesAStaleList(t *testing.T) {
+	app := loadU(t)
+	for i := 0; i < 2; i++ {
+		if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+			t.Fatalf("AddPlane: %v", err)
+		}
+	}
+	ids := []string{app.Plan().Cuts[0].ID, app.Plan().Cuts[1].ID}
+
+	if _, err := app.ReorderPlan([]string{ids[0]}); err == nil {
+		t.Error("too few ids should be refused")
+	}
+	if _, err := app.ReorderPlan([]string{ids[0], ids[0]}); err == nil {
+		t.Error("a repeated id should be refused; it would duplicate one entry and lose another")
+	}
+	if _, err := app.ReorderPlan([]string{ids[0], "nope"}); err == nil {
+		t.Error("an unknown id should be refused")
+	}
+	// And a refused reorder must leave the plan alone.
+	if got := len(app.Plan().Cuts); got != 2 {
+		t.Errorf("the plan holds %d cuts after refused reorders, want 2", got)
+	}
+}
+
 func TestExecutingAnEmptyPlanIsRefused(t *testing.T) {
 	app := loadU(t)
 	if _, err := app.ExecutePlan(); err == nil {

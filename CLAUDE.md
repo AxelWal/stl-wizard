@@ -159,7 +159,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 71
+    node e2e/gui.test.mjs              # all 73
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
