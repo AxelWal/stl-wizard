@@ -440,6 +440,8 @@ type ExecuteOutcome struct {
 	// is the difference between a plan the user can fix and one that quietly does less
 	// than it says.
 	Skipped []string `json:"skipped"`
+	// GapsClosed counts pieces a cut left open that repair then closed.
+	GapsClosed int `json:"gapsClosed"`
 	// Made is one report per entry that cut something, carrying that entry's own pin
 	// spec. Pins are per entry, so the count placed and the wording — peg or dowel —
 	// have to be reported against the entry that asked for them rather than summed
@@ -455,6 +457,9 @@ type PlanCutReport struct {
 	PinsPlaced    int              `json:"pinsPlaced"`
 	PinsRequested int              `json:"pinsRequested"`
 	PinsSkipped   []cut.SkippedPin `json:"pinsSkipped"`
+	// GapsClosed counts pieces the cut left open that repair then closed. Cutting
+	// through a pin's cylinder leaves a small rim the cap triangulator does not pair.
+	GapsClosed int `json:"gapsClosed"`
 }
 
 // ExecutePlan rebuilds the part tree from the plan.
@@ -520,6 +525,7 @@ func (a *App) ExecutePlan() (*ExecuteOutcome, error) {
 					out.Watertight = false
 				}
 				out.Warnings = append(out.Warnings, res.Warnings...)
+				out.GapsClosed += res.GapsClosed
 				report.PinsPlaced += res.PinsPlaced
 				report.PinsRequested += res.PinsRequested
 				report.PinsSkipped = append(report.PinsSkipped, res.PinsSkipped...)
@@ -809,6 +815,9 @@ type CutOutcome struct {
 	// both numbers to admit it placed fewer than were asked for.
 	PinsRequested int              `json:"pinsRequested"`
 	PinsSkipped   []cut.SkippedPin `json:"pinsSkipped"`
+	// GapsClosed counts pieces the cut left open that repair then closed. Cutting
+	// through a pin's cylinder leaves a small rim the cap triangulator does not pair.
+	GapsClosed int `json:"gapsClosed"`
 }
 
 // Cut splits the given part with a bounded plane, then applies the given
@@ -891,14 +900,68 @@ func (a *App) cutPartLocked(tr *Tree, partID string, spec cut.Spec, pins cut.Pin
 	if pins.Enabled {
 		requested = pins.Count
 	}
+	warnings := append(res.Warnings, pinRes.Warnings...)
+
+	// A cut that leaves a piece open gets one repair attempt.
+	//
+	// Cutting through a pin's cylinder leaves a rim of about three edges that the cap
+	// triangulator does not pair — the defect measured at roughly half of all pieces
+	// when auto-splitting with pins on every cut. That is a real weakness in the
+	// triangulation and it is still there; what this does is close the gap afterwards,
+	// which turns an unprintable piece into a printable one for the price of three
+	// triangles and a volume change around a ten-millionth.
+	//
+	// Reported, never silent: the piece is not the one the cut produced, and a user
+	// checking why a volume moved has to be able to find out. A piece repair cannot
+	// close stays flagged exactly as before.
+	repairs := repairCutParts(tr, res, &warnings)
+
 	return &CutOutcome{
 		Tree:          viewOf(tr),
 		Watertight:    res.Watertight(),
-		Warnings:      append(res.Warnings, pinRes.Warnings...),
+		Warnings:      warnings,
 		PinsPlaced:    pinRes.Placed,
 		PinsRequested: requested,
 		PinsSkipped:   pinRes.Skipped,
+		GapsClosed:    repairs,
 	}, nil
+}
+
+// repairCutParts tries to close any piece the cut left open, and returns how many it
+// managed. The tree's record of each part is refreshed, so what the sidebar shows is
+// the geometry that will actually be exported.
+func repairCutParts(tr *Tree, res *cut.Result, warnings *[]string) int {
+	closed := 0
+	for i, part := range []*stl.Mesh{res.Part1, res.Part2} {
+		chk := res.Part1Check
+		if i == 1 {
+			chk = res.Part2Check
+		}
+		if chk.OK() {
+			continue
+		}
+		eps := part.Epsilon()
+		before := part.Volume()
+		r := repair.Repair(part, eps)
+		after := meshcheck.Check(part, eps)
+		if !after.OK() {
+			continue // left as it was; the existing warning already says so
+		}
+		closed++
+		if i == 0 {
+			res.Part1Check = after
+		} else {
+			res.Part2Check = after
+		}
+		*warnings = append(*warnings, fmt.Sprintf(
+			"the cut left one piece open by %d edge(s); the gap was closed with %d triangle(s), "+
+				"changing that piece's volume by %.4gmm³ out of %.6g",
+			chk.OpenEdges, r.TrianglesAdded, part.Volume()-before, before))
+	}
+	if closed > 0 {
+		tr.RefreshLeaves()
+	}
+	return closed
 }
 
 // maxAutoSplitCuts caps the AutoSplit loop so a pathological bed/model
@@ -911,6 +974,10 @@ type AutoSplitOutcome struct {
 	CutsMade    int       `json:"cutsMade"`
 	StillTooBig []string  `json:"stillTooBig"`
 	Warnings    []string  `json:"warnings"`
+	// GapsClosed counts pieces a cut left open that repair then closed. Pins are what
+	// provoke it: a cut through a pin's cylinder leaves a rim the cap triangulator does
+	// not pair.
+	GapsClosed int `json:"gapsClosed"`
 }
 
 // AutoSplit divides the open model until every piece fits the given build
@@ -987,6 +1054,7 @@ func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error
 		}
 		out.CutsMade++
 		out.Warnings = append(out.Warnings, res.Warnings...)
+		out.GapsClosed += res.GapsClosed
 
 		if out.CutsMade >= maxAutoSplitCuts {
 			out.Warnings = append(out.Warnings, fmt.Sprintf(

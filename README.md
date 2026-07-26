@@ -293,14 +293,23 @@ returned flagged, never silently.
 
 - A cutting plane placed exactly flush with a flat face of the model can leave
   T-junctions at reflex corners. Nudge the plane slightly.
-- Cutting a part that **already carries pins** often produces a piece that is not
-  a closed solid. Pins put several circular holes in the cut face, and bridging
-  them can emit slivers thin enough that a later cut cannot pair their edges.
-  Measured: auto-splitting a 300mm cube onto a 120mm bed flags 37 of 64 pieces
-  when pins are enabled, and 0 of 64 when they are not. Every affected piece is
-  reported — never silently — so the practical advice is to make all the cuts
-  first and enable pins on the last one, or to check the parts list before
-  exporting.
+- Cutting through a pin's cylinder leaves a piece open by about three edges: the cap
+  triangulator does not pair them. **That weakness is still there**, but the outcome is
+  no longer an unprintable piece — a cut that leaves a piece open gets one repair
+  attempt, and a three-edge rim is exactly what repair closes.
+
+  Measured on the documented case, auto-splitting a 300mm cube onto a 120mm bed:
+
+  | | with pins | without |
+  |---|---|---|
+  | before the repair attempt | 32 of 65 flagged | 0 of 64 |
+  | now | **5 of 64 flagged**, 36 gaps closed | 0 of 64 |
+
+  Every closed gap is reported with the edge count and the volume it moved — typically
+  0mm³ to four figures on a piece of several hundred thousand. The five that remain are
+  ones repair cannot close, and they stay flagged. The advice to make the cuts first and
+  pin the last one still gives the cleanest result, but it is no longer the difference
+  between printable and not.
 - The same weakness affects heavily-curved models even without pins: auto-splitting
   a fine-tessellated sphere (`UVSphere(80, 32, 16)`) onto a 100mm bed takes 7 cuts
   and flags 3 of the 8 pieces. Cubes and tubes survive it.

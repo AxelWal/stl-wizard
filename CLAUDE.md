@@ -290,10 +290,14 @@ survive; the stride only affects where things are drawn.
 
 ## Read before trusting results
 
-`README.md` "Known limitations" carries measured failure rates — most
-importantly that cutting a part which **already has pins** often yields a
-piece that is not a closed solid (37 of 64 with pins, 0 of 64 without).
-Everything affected is flagged at runtime, never silent.
+`README.md` "Known limitations" carries measured failure rates. The big one: cutting
+through a pin's cylinder leaves a piece open by about three edges, because the cap
+triangulator does not pair them. The triangulation weakness is **still there** —
+`repairCutParts` in `app.go` closes the gap afterwards instead, which took the
+documented case from 32 of 65 pieces flagged to 5 of 64. Every closed gap is reported
+with its edge count and the volume it moved; a gap repair cannot close leaves the piece
+flagged as before. If you go after the root cause, the shortest repro is a 300mm cube
+auto-split onto a 200mm bed with 4 pins: 7 cuts, 2 pieces open by 3 edges each.
 
 `PinSpec.Count` is a **target, not a demand** (`internal/cut/pins.go:17`):
 placement grids the face and stops when it runs out of room, and a pin it never

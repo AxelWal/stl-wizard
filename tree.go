@@ -180,6 +180,26 @@ func (t *Tree) replaceLeaf(id string, meshes []*stl.Mesh, watertight []bool, nam
 	return kids, nil
 }
 
+// RefreshLeaves recomputes every leaf's recorded measurements from its mesh.
+//
+// Needed when a mesh is changed after the part was created — a cut that left a gap and
+// had it closed is not the geometry the part first recorded, and the sidebar must show
+// what will actually be exported.
+func (t *Tree) RefreshLeaves() {
+	for _, p := range t.Leaves() {
+		if p.Mesh == nil {
+			continue
+		}
+		b := p.Mesh.BBox()
+		size := b.Size()
+		p.Tris = len(p.Mesh.Tris)
+		p.Volume = p.Mesh.Volume()
+		p.Min = [3]float64{b.Min[0], b.Min[1], b.Min[2]}
+		p.Size = [3]float64{size[0], size[1], size[2]}
+		p.Watertight = meshcheck.Check(p.Mesh, p.Mesh.Epsilon()).OK()
+	}
+}
+
 // Undo reverses the most recent split.
 func (t *Tree) Undo() error {
 	if len(t.history) == 0 {

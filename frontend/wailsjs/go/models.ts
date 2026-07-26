@@ -186,6 +186,7 @@ export namespace main {
 	    cutsMade: number;
 	    stillTooBig: string[];
 	    warnings: string[];
+	    gapsClosed: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new AutoSplitOutcome(source);
@@ -197,6 +198,7 @@ export namespace main {
 	        this.cutsMade = source["cutsMade"];
 	        this.stillTooBig = source["stillTooBig"];
 	        this.warnings = source["warnings"];
+	        this.gapsClosed = source["gapsClosed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -224,6 +226,7 @@ export namespace main {
 	    pinsPlaced: number;
 	    pinsRequested: number;
 	    pinsSkipped: cut.SkippedPin[];
+	    gapsClosed: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new CutOutcome(source);
@@ -237,6 +240,7 @@ export namespace main {
 	        this.pinsPlaced = source["pinsPlaced"];
 	        this.pinsRequested = source["pinsRequested"];
 	        this.pinsSkipped = this.convertValues(source["pinsSkipped"], cut.SkippedPin);
+	        this.gapsClosed = source["gapsClosed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -264,6 +268,7 @@ export namespace main {
 	    pinsPlaced: number;
 	    pinsRequested: number;
 	    pinsSkipped: cut.SkippedPin[];
+	    gapsClosed: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new PlanCutReport(source);
@@ -277,6 +282,7 @@ export namespace main {
 	        this.pinsPlaced = source["pinsPlaced"];
 	        this.pinsRequested = source["pinsRequested"];
 	        this.pinsSkipped = this.convertValues(source["pinsSkipped"], cut.SkippedPin);
+	        this.gapsClosed = source["gapsClosed"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -398,6 +404,7 @@ export namespace main {
 	    watertight: boolean;
 	    warnings: string[];
 	    skipped: string[];
+	    gapsClosed: number;
 	    made: PlanCutReport[];
 	
 	    static createFrom(source: any = {}) {
@@ -412,6 +419,7 @@ export namespace main {
 	        this.watertight = source["watertight"];
 	        this.warnings = source["warnings"];
 	        this.skipped = source["skipped"];
+	        this.gapsClosed = source["gapsClosed"];
 	        this.made = this.convertValues(source["made"], PlanCutReport);
 	    }
 	

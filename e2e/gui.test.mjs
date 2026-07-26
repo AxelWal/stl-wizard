@@ -1106,9 +1106,14 @@ test("a part that is not a closed solid is flagged in the list and the sidebar",
   const parts = await app.parts();
   const bad = parts.filter((p) => !p.closed);
   if (bad.length === 0) {
-    // Nothing was mangled, so there is nothing to check the flagging against.
-    // Say so rather than pass silently on a vacuous assertion.
-    expect.contains(msg, "Split into", "at least that the split ran");
+    // Nothing came back broken, which is now the usual outcome: a cut that leaves a
+    // piece open gets one repair attempt and a small rim is exactly what repair closes.
+    // Assert the run happened and that any gap it closed was reported, rather than
+    // passing on a vacuous check.
+    expect.contains(msg, "cut(s) from the plan", "at least that the split ran");
+    if (msg.includes("open by")) {
+      expect.contains(msg, "the gap was closed", "a closed gap is reported, never silent");
+    }
     return;
   }
   for (const p of bad) {
