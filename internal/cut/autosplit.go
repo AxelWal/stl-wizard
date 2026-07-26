@@ -58,6 +58,13 @@ type AutoSplitStep struct {
 // Each step halves the longest overflowing axis with a rectangle bounded to
 // that box's own cross-section, so it cannot also strike an unrelated sibling
 // piece that happens to share the same footprint on the other two axes.
+//
+// Do not replay the whole plan across a tree of real meshes. Every step after
+// the first is derived from a *predicted* bounding box, and a shape that does
+// not fill its box — a U, an L, a hollow shell — makes those predictions
+// over-estimates, which was found to let one branch's cut slice a sibling
+// piece. Apply steps[0] to the mesh it was planned from, then replan from the
+// real fragments; that is what App.AutoSplit does.
 func PlanAutoSplit(m *stl.Mesh, bed Bed) ([]AutoSplitStep, error) {
 	if err := bed.valid(); err != nil {
 		return nil, err

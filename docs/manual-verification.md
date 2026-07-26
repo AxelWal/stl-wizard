@@ -82,6 +82,10 @@ a system with webkit2gtk 4.0 instead of 4.1).
       material behind the face, not placed and broken through.
 - [ ] Set Min wall to 0.1 and repeat: more pins are now placed. That proves the
       guard is doing the work rather than the geometry refusing anyway.
+- [ ] Cut a model twice with pins enabled on both cuts. Expect some pieces to be
+      flagged — confirm they are flagged rather than silently broken: a ⚠ in the
+      parts list, "Closed: no — may not print", and a warning in the sidebar. See
+      the README's Known limitations for why this happens and how often.
 
 ## Fit to printer
 

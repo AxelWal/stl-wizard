@@ -717,6 +717,54 @@ func TestAutoSplitReportsProgressWhenACutFails(t *testing.T) {
 	}
 }
 
+// One leaf that cannot be divided must not block every leaf behind it.
+func TestAutoSplitSkipsALeafItCannotDivide(t *testing.T) {
+	app := NewApp()
+	// A fine-tessellated sphere has leaves the planner cannot always cut.
+	if _, err := app.loadPath(writeFixture(t, "sphere.stl", fixtures.UVSphere(80, 32, 16))); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	bed := cut.Bed{X: 60, Y: 60, Z: 60}
+	out, err := app.AutoSplit(bed, cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AutoSplit: %v", err)
+	}
+
+	// Whatever it could not divide must be named, and everything it could divide
+	// must actually have been divided — a piece the size of the original means the
+	// run gave up before reaching it.
+	original := app.session.Tree().Root
+	for _, leaf := range app.session.Tree().Leaves() {
+		if leaf.ID == original.ID {
+			continue
+		}
+		if !bed.Fits(leafBBox(leaf)) {
+			named := false
+			for _, n := range out.StillTooBig {
+				if n == leaf.Name {
+					named = true
+				}
+			}
+			if !named {
+				t.Errorf("%s is oversized but not reported in StillTooBig", leaf.Name)
+			}
+		}
+	}
+	if out.CutsMade == 0 {
+		t.Error("made no cuts at all")
+	}
+
+	// The point of skipping: no leaf is left at anything like the original's
+	// size. Before the fix one 80x80x160 piece came back untouched.
+	for _, leaf := range app.session.Tree().Leaves() {
+		if leaf.Size[0] >= original.Size[0] && leaf.Size[1] >= original.Size[1] &&
+			leaf.Size[2] >= original.Size[2] {
+			t.Errorf("%s is still the full size of the model — the run gave up before reaching it", leaf.Name)
+		}
+	}
+}
+
 // One user-visible operation emits one start/done pair, however many cuts it
 // makes internally — otherwise a long auto-split flickers the progress bar once
 // per cut instead of showing one continuous run. cutPart's cut:progress still

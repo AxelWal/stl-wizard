@@ -260,19 +260,31 @@ type AutoSplitOutcome struct {
 // iteration, sidesteps that: every plan is derived from geometry that
 // actually exists. It also means every cut AutoSplit makes lands as its own
 // undoable step, exactly like a manual one.
+//
+// A leaf the planner or the cutter cannot handle is skipped and the loop moves
+// on. The failure is per-leaf, so the recovery is too: abandoning the run would
+// leave every piece behind that one in the traversal untouched, oversized and
+// unexplained.
 func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error) {
 	out := &AutoSplitOutcome{}
 
 	a.emit("cut:start")
 	defer a.emit("cut:done")
 
+	// Leaves this run has given up on. A leaf the planner or the cutter cannot
+	// handle is a fact about that one leaf, not about the run: without this,
+	// one awkward piece near the front of the traversal blocks every piece
+	// behind it in the queue. Anything skipped still fails the final oversized
+	// scan below, so it is named in StillTooBig either way.
+	skip := make(map[string]bool)
+
 	for {
-		target, err := a.firstOversizedLeaf(bed)
+		target, name, err := a.firstOversizedLeaf(bed, skip)
 		if err != nil {
 			return nil, err
 		}
 		if target == "" {
-			break // everything fits
+			break // everything fits, or everything left has already been given up on
 		}
 
 		mesh, ok := a.session.MeshFor(target)
@@ -284,17 +296,24 @@ func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error
 			return nil, err
 		}
 		if len(steps) == 0 {
-			break // PlanAutoSplit has nothing left to offer for this leaf
+			// The planner sees this leaf's real mesh; the scan above sees the
+			// Min/Size pair the tree carries for the frontend, which round-trips
+			// through floating point. They can disagree at the margin. Either way
+			// there is no cut to make here.
+			skip[target] = true
+			continue
 		}
 
 		res, err := a.cutPart(target, steps[0].Spec, pins)
 		if err != nil {
-			// Earlier cuts have already committed to the tree. Returning a bare
-			// error would leave the caller unaware the model changed at all, and
-			// the window showing geometry that no longer exists.
+			// This leaf cannot be divided, but the others still can. Give up on
+			// it alone rather than abandoning every piece behind it in the queue.
+			// Earlier cuts have already committed to the tree, and the caller
+			// needs to know the model changed even when a piece defeats us.
 			out.Warnings = append(out.Warnings, fmt.Sprintf(
-				"stopped after %d cut(s): %v", out.CutsMade, err))
-			break
+				"could not divide %s: %v", name, err))
+			skip[target] = true
+			continue
 		}
 		out.CutsMade++
 		out.Warnings = append(out.Warnings, res.Warnings...)
@@ -315,20 +334,20 @@ func (a *App) AutoSplit(bed cut.Bed, pins cut.PinSpec) (*AutoSplitOutcome, error
 	return out, nil
 }
 
-// firstOversizedLeaf returns the id of the first leaf that does not fit bed,
-// or "" once every leaf fits.
-func (a *App) firstOversizedLeaf(bed cut.Bed) (string, error) {
-	var id string
+// firstOversizedLeaf returns the id and name of the first leaf that does not fit
+// bed and is not in skip, or "" once there is no such leaf.
+func (a *App) firstOversizedLeaf(bed cut.Bed, skip map[string]bool) (string, string, error) {
+	var id, name string
 	err := a.session.WithTree(func(tr *Tree) error {
 		for _, leaf := range tr.Leaves() {
-			if !bed.Fits(leafBBox(leaf)) {
-				id = leaf.ID
+			if !skip[leaf.ID] && !bed.Fits(leafBBox(leaf)) {
+				id, name = leaf.ID, leaf.Name
 				return nil
 			}
 		}
 		return nil
 	})
-	return id, err
+	return id, name, err
 }
 
 // oversizedLeaves names every leaf that does not fit bed.

@@ -11,6 +11,27 @@ import (
 	"stl-cutter/internal/stl"
 )
 
+// discAt returns a flat disc facing along normal. Production never needs one —
+// a peg is closed by pinCylinder's own end disc and by the hole it stands in —
+// but the tests below need a base to close a bare cylinder with before its
+// volume or its watertightness means anything.
+func discAt(centre, normal, u, v geom.Vec3, r float64, segments int) []stl.Tri {
+	out := make([]stl.Tri, 0, segments)
+	ring := func(i int) geom.Vec3 {
+		a := 2 * math.Pi * float64(i) / float64(segments)
+		return centre.Add(u.Scale(r * math.Cos(a))).Add(v.Scale(r * math.Sin(a)))
+	}
+	for i := 0; i < segments; i++ {
+		j := (i + 1) % segments
+		tr := stl.Tri{A: centre, B: ring(i), C: ring(j)}
+		if tr.Normal().Dot(normal) < 0 {
+			tr = tr.Reversed()
+		}
+		out = append(out, tr)
+	}
+	return out
+}
+
 // squareFace builds a faceGroup covering a square centred on the origin.
 func squareFace(half float64) faceGroup {
 	return faceGroup{Outer: projectZ(square(0, 0, half))}

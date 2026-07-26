@@ -90,8 +90,17 @@ returned flagged, never silently.
 
 - A cutting plane placed exactly flush with a flat face of the model can leave
   T-junctions at reflex corners. Nudge the plane slightly.
-- Roughly 1% of bounded cuts hit a limit in cap triangulation and come back
-  flagged.
+- Cutting a part that **already carries pins** often produces a piece that is not
+  a closed solid. Pins put several circular holes in the cut face, and bridging
+  them can emit slivers thin enough that a later cut cannot pair their edges.
+  Measured: auto-splitting a 300mm cube onto a 120mm bed flags 37 of 64 pieces
+  when pins are enabled, and 0 of 64 when they are not. Every affected piece is
+  reported — never silently — so the practical advice is to make all the cuts
+  first and enable pins on the last one, or to check the parts list before
+  exporting.
+- The same weakness affects heavily-curved models even without pins: auto-splitting
+  a fine-tessellated sphere (`UVSphere(80, 32, 16)`) onto a 100mm bed takes 7 cuts
+  and flags 3 of the 8 pieces. Cubes and tubes survive it.
 - Cutting costs about 5µs per triangle, so a two-million-triangle model takes
   around ten seconds per cut.
 - Pin placement samples the cut face on a grid rather than computing its

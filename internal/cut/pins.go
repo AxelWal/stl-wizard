@@ -345,25 +345,6 @@ func pinCylinder(base, dir, u, v geom.Vec3, r, length float64, segments int, cav
 	return out
 }
 
-// discAt returns a flat disc facing along normal. Used to close a pin for testing
-// and to floor a socket.
-func discAt(centre, normal, u, v geom.Vec3, r float64, segments int) []stl.Tri {
-	out := make([]stl.Tri, 0, segments)
-	ring := func(i int) geom.Vec3 {
-		a := 2 * math.Pi * float64(i) / float64(segments)
-		return centre.Add(u.Scale(r * math.Cos(a))).Add(v.Scale(r * math.Sin(a)))
-	}
-	for i := 0; i < segments; i++ {
-		j := (i + 1) % segments
-		tr := stl.Tri{A: centre, B: ring(i), C: ring(j)}
-		if tr.Normal().Dot(normal) < 0 {
-			tr = tr.Reversed()
-		}
-		out = append(out, tr)
-	}
-	return out
-}
-
 // SkippedPin records a pin that could not be placed, and why. A skipped pin is
 // always reported: silently leaving one out would let a user print two pieces
 // that do not locate against each other.
@@ -527,6 +508,12 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Keep what pinning is about to replace, and the verdict that described it.
+	// repaveFace builds fresh slices, so these stay valid however the pinned
+	// parts are appended to.
+	pegBefore, socketBefore := pegPart.Tris, socketPart.Tris
+	before1, before2 := res.Part1Check, res.Part2Check
+
 	pegPart.Tris = append(pegPaved, pegTris...)
 	socketPart.Tris = append(socketPaved, socketTris...)
 
@@ -537,6 +524,23 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	// replaced — none of which the placement logic can see for itself.
 	res.Part1Check = meshcheck.Check(res.Part1, eps)
 	res.Part2Check = meshcheck.Check(res.Part2, eps)
+
+	// A sound cut that pinning has holed is worse than the same cut with no pins
+	// in it: unpinned pieces still print and still mate, an open part does
+	// neither. Put the bare cut back rather than leaving Undo as the only way out.
+	//
+	// ponytail: "worse" means a part that was sound is not any more. A part the
+	// cut already broke is left as pinned — there is nothing sound left to
+	// protect, and rolling back would not make it printable either.
+	if (before1.OK() && !res.Part1Check.OK()) || (before2.OK() && !res.Part2Check.OK()) {
+		pegPart.Tris, socketPart.Tris = pegBefore, socketBefore
+		res.Part1Check, res.Part2Check = before1, before2
+		out.Placed, out.Skipped = 0, nil
+		out.Warnings = append(out.Warnings,
+			"adding pins would have left a part open, so the cut was kept without them")
+		return out, nil
+	}
+
 	if !res.Part1Check.OK() {
 		out.Warnings = append(out.Warnings, fmt.Sprintf(
 			"after adding pins, the remaining part is not a closed solid: %s", res.Part1Check))
