@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"stl-wizard/internal/geom"
 	"stl-wizard/internal/meshcheck"
@@ -144,14 +147,23 @@ func SplitProgress(m *stl.Mesh, s Spec, onProgress func(float64)) (*Result, erro
 	cutPlane := planes[0]
 	res := &Result{}
 
-	coplanar := 0
-	for _, t := range m.Tris {
-		if classifyTri(t, planes, eps) == triInside &&
-			cutPlane.Classify(t.A, eps) == On &&
-			cutPlane.Classify(t.B, eps) == On &&
-			cutPlane.Classify(t.C, eps) == On {
-			coplanar++
+	// A tally over independent triangles, so it is shared across the cores. The answer is
+	// a sum and cannot depend on the order the chunks finish in.
+	counts := make([]int, chunksFor(len(m.Tris)))
+	overChunks(len(m.Tris), func(c, lo, hi int) {
+		for i := lo; i < hi; i++ {
+			t := m.Tris[i]
+			if classifyTri(t, planes, eps) == triInside &&
+				cutPlane.Classify(t.A, eps) == On &&
+				cutPlane.Classify(t.B, eps) == On &&
+				cutPlane.Classify(t.C, eps) == On {
+				counts[c]++
+			}
 		}
+	})
+	coplanar := 0
+	for _, c := range counts {
+		coplanar += c
 	}
 
 	// Build part 2 by clipping to one half-space at a time and capping as we go.
@@ -170,13 +182,27 @@ func SplitProgress(m *stl.Mesh, s Spec, onProgress func(float64)) (*Result, erro
 		var insidePolys []Polygon
 		var next []taggedPoly
 
-		for _, cp := range current {
-			// out is discarded here; part 1 is built separately, below.
-			in, _ := splitPolygon(cp.poly, p, eps)
-			if in != nil {
-				next = append(next, taggedPoly{poly: in, isCap: cp.isCap})
-				insidePolys = append(insidePolys, in)
+		// Clipping one polygon is independent of clipping any other, so a plane's pass goes
+		// across the cores. Each chunk keeps its own output and they are joined in chunk
+		// order, never completion order: the triangles triangulateFace returns depend on
+		// the order it is given the polygons, so joining out of order would make a cut
+		// depend on which goroutine finished first.
+		chunkNext := make([][]taggedPoly, chunksFor(len(current)))
+		chunkInside := make([][]Polygon, len(chunkNext))
+		overChunks(len(current), func(c, lo, hi int) {
+			for i := lo; i < hi; i++ {
+				cp := current[i]
+				// out is discarded here; part 1 is built separately, below.
+				in, _ := splitPolygon(cp.poly, p, eps)
+				if in != nil {
+					chunkNext[c] = append(chunkNext[c], taggedPoly{poly: in, isCap: cp.isCap})
+					chunkInside[c] = append(chunkInside[c], in)
+				}
 			}
+		})
+		for c := range chunkNext {
+			next = append(next, chunkNext[c]...)
+			insidePolys = append(insidePolys, chunkInside[c]...)
 		}
 
 		if len(next) == 0 {
@@ -219,30 +245,53 @@ func SplitProgress(m *stl.Mesh, s Spec, onProgress func(float64)) (*Result, erro
 	// Those cuts are invisible to the untouched neighbouring face across the
 	// edge, and every one of them is an open edge.
 	part1 := &stl.Mesh{}
-	for i, t := range m.Tris {
-		frag := Polygon{t.A, t.B, t.C}
-		for _, p := range planes {
-			frag, _ = splitPolygon(frag, p, eps)
+	// Each triangle's contribution to part 1 is independent of every other's, so this goes
+	// across the cores too. Chunks collect their own triangles and their own counts, joined
+	// below in chunk order so part 1 comes out in mesh order whatever the parallelism.
+	chunkTris := make([][]stl.Tri, chunksFor(len(m.Tris)))
+	chunkLeftover := make([]int, len(chunkTris))
+	var progressed atomic.Int64
+	overChunks(len(m.Tris), func(c, lo, hi int) {
+		// How often to tick, scaled to the chunk rather than fixed: with the work shared
+		// sixteen ways a fixed period of a few thousand never comes round inside a chunk
+		// at all, and the periodic report stopped firing.
+		period := max((hi-lo)/8, 1)
+		for i := lo; i < hi; i++ {
+			t := m.Tris[i]
+			frag := Polygon{t.A, t.B, t.C}
+			for _, p := range planes {
+				frag, _ = splitPolygon(frag, p, eps)
+				if frag == nil {
+					break
+				}
+			}
 			if frag == nil {
-				break
+				// Nothing of this triangle is inside the cutter, so it crosses over
+				// unchanged. Bit for bit: that identity is what makes the cut bounded,
+				// and clipping a triangle against planes it never meets would still
+				// perturb its vertices.
+				chunkTris[c] = append(chunkTris[c], t)
+				continue
+			}
+			tris, ok := subtractFragment(t, frag, eps)
+			if !ok {
+				chunkLeftover[c]++
+			}
+			chunkTris[c] = append(chunkTris[c], tris...)
+			if (i-lo+1)%period == 0 {
+				// Every chunk counts its own work, but only chunk 0 reports it. The
+				// callback reaches the frontend and must not be entered concurrently, and
+				// a count that only grows keeps the bar moving one way.
+				n := progressed.Add(int64(period))
+				if c == 0 {
+					report(0.5 + 0.5*math.Min(float64(n)/float64(len(m.Tris)), 1))
+				}
 			}
 		}
-		if frag == nil {
-			// Nothing of this triangle is inside the cutter, so it crosses over
-			// unchanged. Bit for bit: that identity is what makes the cut bounded,
-			// and clipping a triangle against planes it never meets would still
-			// perturb its vertices.
-			part1.Tris = append(part1.Tris, t)
-			continue
-		}
-		tris, ok := subtractFragment(t, frag, eps)
-		if !ok {
-			res.LeftoverIncomplete++
-		}
-		part1.Tris = append(part1.Tris, tris...)
-		if (i+1)%4096 == 0 {
-			report(0.5 + 0.5*float64(i)/float64(len(m.Tris)))
-		}
+	})
+	for c := range chunkTris {
+		part1.Tris = append(part1.Tris, chunkTris[c]...)
+		res.LeftoverIncomplete += chunkLeftover[c]
 	}
 	if len(part1.Tris) == 0 {
 		return nil, errors.New("the cutting rectangle encloses the entire model — nothing would be left behind")
@@ -535,4 +584,46 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// chunksFor is how many ways a per-triangle pass is shared out. Small meshes stay on one
+// goroutine, where coordinating costs more than the work saved.
+func chunksFor(n int) int {
+	if n < 4096 {
+		return 1
+	}
+	c := runtime.GOMAXPROCS(0)
+	if c > 16 {
+		c = 16
+	}
+	if c < 1 {
+		c = 1
+	}
+	return c
+}
+
+// overChunks runs fn over contiguous ranges of [0, n) concurrently, giving each its chunk
+// number so it can write to a slot of its own without synchronising. The caller joins the
+// slots in chunk order; see the note where it is used.
+func overChunks(n int, fn func(chunk, lo, hi int)) {
+	chunks := chunksFor(n)
+	if chunks == 1 {
+		fn(0, 0, n)
+		return
+	}
+	per := (n + chunks - 1) / chunks
+	var wg sync.WaitGroup
+	for c := range chunks {
+		lo := c * per
+		hi := min(lo+per, n)
+		if lo >= hi {
+			continue
+		}
+		wg.Add(1)
+		go func(c, lo, hi int) {
+			defer wg.Done()
+			fn(c, lo, hi)
+		}(c, lo, hi)
+	}
+	wg.Wait()
 }

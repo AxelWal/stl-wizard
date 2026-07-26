@@ -2,6 +2,7 @@ package cut
 
 import (
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -389,5 +390,76 @@ func TestSplitProgressReportsDuringTheLongPass(t *testing.T) {
 	}
 	if last := seen[len(seen)-1]; last != 1 {
 		t.Errorf("final report is %v, want exactly 1", last)
+	}
+}
+
+// Splitting must give the same answer whatever the machine's parallelism. Chunk counts come
+// from GOMAXPROCS, so varying it varies how the work is shared out — and every piece of
+// geometry, every warning and every count must come back identical, triangle for triangle
+// in the same order. Anything less and a cut would depend on the hardware it ran on.
+func TestSplitIsIdenticalHoweverTheWorkIsShared(t *testing.T) {
+	was := runtime.GOMAXPROCS(0)
+	defer runtime.GOMAXPROCS(was)
+
+	for _, fx := range []struct {
+		name string
+		mesh *stl.Mesh
+	}{
+		{"cube", fixtures.Cube(10)},
+		{"u", fixtures.UShape(10)},
+		// Above chunksFor's threshold, or the work is never shared out and this test
+		// exercises the serial path only — which is how the first version of it passed
+		// against chunks deliberately joined in the wrong order.
+		{"dense sphere", fixtures.UVSphere(20, 128, 64)},
+	} {
+		if fx.name == "dense sphere" && chunksFor(len(fx.mesh.Tris)) < 2 {
+			t.Fatalf("the dense sphere has %d triangles, which is not enough to be shared out",
+				len(fx.mesh.Tris))
+		}
+		box := fx.mesh.BBox()
+		size := box.Size()
+		centre := geom.Vec3{
+			(box.Min[0] + box.Max[0]) / 2,
+			(box.Min[1] + box.Max[1]) / 2,
+			(box.Min[2] + box.Max[2]) / 2,
+		}
+		spec := SpecFromNormal(centre, geom.Vec3{0, 0, 1}, size[0]*2, size[1]*2)
+
+		var reference *Result
+		for _, procs := range []int{1, 2, 8, 32} {
+			runtime.GOMAXPROCS(procs)
+			got, err := Split(fx.mesh, spec)
+			if err != nil {
+				t.Fatalf("%s at GOMAXPROCS=%d: %v", fx.name, procs, err)
+			}
+			if reference == nil {
+				reference = got
+				continue
+			}
+			for _, p := range []struct {
+				which string
+				a, b  *stl.Mesh
+			}{
+				{"part 1", reference.Part1, got.Part1},
+				{"part 2", reference.Part2, got.Part2},
+			} {
+				if len(p.a.Tris) != len(p.b.Tris) {
+					t.Fatalf("%s %s at GOMAXPROCS=%d: %d triangles, want %d",
+						fx.name, p.which, procs, len(p.b.Tris), len(p.a.Tris))
+				}
+				for i := range p.a.Tris {
+					if p.a.Tris[i] != p.b.Tris[i] {
+						t.Fatalf("%s %s at GOMAXPROCS=%d: triangle %d is %v, want %v",
+							fx.name, p.which, procs, i, p.b.Tris[i], p.a.Tris[i])
+					}
+				}
+			}
+			if got.OpenLoops != reference.OpenLoops || got.CapIncomplete != reference.CapIncomplete ||
+				got.LeftoverIncomplete != reference.LeftoverIncomplete {
+				t.Errorf("%s at GOMAXPROCS=%d: counts differ (%d/%d/%d against %d/%d/%d)",
+					fx.name, procs, got.OpenLoops, got.CapIncomplete, got.LeftoverIncomplete,
+					reference.OpenLoops, reference.CapIncomplete, reference.LeftoverIncomplete)
+			}
+		}
 	}
 }
