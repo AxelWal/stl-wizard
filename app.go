@@ -107,15 +107,22 @@ type RepairView struct {
 func (a *App) view() *TreeView {
 	var v *TreeView
 	_ = a.session.WithTree(func(tr *Tree) error {
-		v = &TreeView{
-			ModelName:  tr.ModelName,
-			Root:       clonePart(tr.Root),
-			SelectedID: tr.SelectedID,
-			CanUndo:    tr.CanUndo(),
-		}
+		v = viewOf(tr)
 		return nil
 	})
 	return v
+}
+
+// viewOf snapshots a tree the caller already holds the lock on. Calling view() from
+// inside WithTree would deadlock, which is exactly what happened when cutPart's tail
+// was moved under the lock.
+func viewOf(tr *Tree) *TreeView {
+	return &TreeView{
+		ModelName:  tr.ModelName,
+		Root:       clonePart(tr.Root),
+		SelectedID: tr.SelectedID,
+		CanUndo:    tr.CanUndo(),
+	}
 }
 
 // clonePart deep-copies a part subtree, so what the frontend receives shares no
@@ -243,7 +250,7 @@ type SeparateOutcome struct {
 // 1 — returning an error would make the common case look like a failure.
 func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
 	out := &SeparateOutcome{}
-	err := a.session.WithTree(func(tr *Tree) error {
+	err := a.session.WithTreeAndPlan(func(tr *Tree, pl *Plan) error {
 		part := tr.Find(partID)
 		if part == nil {
 			return fmt.Errorf("no part with id %q", partID)
@@ -276,6 +283,9 @@ func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
 				out.Flagged = append(out.Flagged, k.Name)
 			}
 		}
+		// Recorded so Cut now reproduces it. Executing rebuilds from the mesh as
+		// loaded, so a separation the plan did not know about would vanish.
+		pl.Add(PlannedCut{Name: "Separate " + part.Name, Separate: true, Target: part.Name})
 		return nil
 	})
 	if err != nil {
@@ -288,6 +298,280 @@ func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
 	}
 	out.Tree = a.view()
 	return out, nil
+}
+
+// PlanView is the cut plan as the frontend sees it.
+type PlanView struct {
+	Cuts []PlannedCut `json:"cuts"`
+}
+
+// planView snapshots the plan. Copied rather than aliased for the same reason
+// clonePart exists: Wails marshals after the lock has been dropped.
+func (a *App) planView() *PlanView {
+	v := &PlanView{}
+	_ = a.session.WithPlan(func(p *Plan) error {
+		v.Cuts = p.clone()
+		return nil
+	})
+	return v
+}
+
+// AddPlane records a cut to make later, aimed at the selected part.
+//
+// Nothing is cut here. That is the point: both cut paths now propose, and only
+// ExecutePlan acts.
+func (a *App) AddPlane(p PlaneInput, pins cut.PinSpec) (*PlanView, error) {
+	spec, err := specFrom(p)
+	if err != nil {
+		return nil, err
+	}
+	_ = spec // validated now rather than at execution, so a bad plane is refused where it is made
+
+	err = a.session.WithTreeAndPlan(func(tr *Tree, pl *Plan) error {
+		part := tr.Find(tr.SelectedID)
+		if part == nil {
+			return fmt.Errorf("no part is selected")
+		}
+		if !part.IsLeaf() {
+			return fmt.Errorf("%q has already been split; select one of its pieces", part.Name)
+		}
+		pl.Add(PlannedCut{Plane: p, Pins: pins, Target: part.Name})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+// PlanFitToPrinter appends one entry per cut needed to bring the model within the bed.
+//
+// The entries leave Target empty, meaning every leaf the bounded rectangle intersects.
+// That is what a slab plan wants, and it is safe: cut.PlanAutoSplit bounds each step's
+// rectangle to that step's own box, so a step cannot strike an unrelated sibling.
+func (a *App) PlanFitToPrinter(bed cut.Bed) (*PlanView, error) {
+	if err := bed.Valid(); err != nil {
+		return nil, err
+	}
+	var steps []cut.AutoSplitStep
+	err := a.session.WithTree(func(tr *Tree) error {
+		var err error
+		steps, err = cut.PlanAutoSplit(tr.Root.Mesh, bed)
+		if tr.Root.Mesh == nil {
+			return errors.New("the model has already been cut; undo first, or clear the plan and start again")
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = a.session.WithPlan(func(p *Plan) error {
+		for _, s := range steps {
+			p.Add(PlannedCut{Plane: planeFromSpec(s.Spec)})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+func (a *App) RenamePlane(id, name string) (*PlanView, error) {
+	if err := a.session.WithPlan(func(p *Plan) error { return p.Rename(id, name) }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+func (a *App) DeletePlane(id string) (*PlanView, error) {
+	if err := a.session.WithPlan(func(p *Plan) error { return p.Delete(id) }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+func (a *App) SetPlaneEnabled(id string, on bool) (*PlanView, error) {
+	if err := a.session.WithPlan(func(p *Plan) error { return p.SetEnabled(id, on) }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+// UpdatePlane re-positions an entry from the gizmo.
+func (a *App) UpdatePlane(id string, p PlaneInput, pins cut.PinSpec) (*PlanView, error) {
+	if _, err := specFrom(p); err != nil {
+		return nil, err
+	}
+	if err := a.session.WithPlan(func(pl *Plan) error { return pl.Update(id, p, pins) }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+func (a *App) ClearPlan() (*PlanView, error) {
+	if err := a.session.WithPlan(func(p *Plan) error { p.Clear(); return nil }); err != nil {
+		return nil, err
+	}
+	return a.planView(), nil
+}
+
+// Plan returns the current plan, for the frontend to render on load.
+func (a *App) Plan() *PlanView { return a.planView() }
+
+// ExecuteOutcome is what Cut now produced.
+type ExecuteOutcome struct {
+	Tree       *TreeView `json:"tree"`
+	Plan       *PlanView `json:"plan"`
+	CutsMade   int       `json:"cutsMade"`
+	Watertight bool      `json:"watertight"`
+	Warnings   []string  `json:"warnings"`
+	// Skipped names entries that could not run, with the reason. An entry whose
+	// target was produced by an entry since deleted has nothing to cut, and saying so
+	// is the difference between a plan the user can fix and one that quietly does less
+	// than it says.
+	Skipped []string `json:"skipped"`
+	// Made is one report per entry that cut something, carrying that entry's own pin
+	// spec. Pins are per entry, so the count placed and the wording — peg or dowel —
+	// have to be reported against the entry that asked for them rather than summed
+	// into one number that describes none of them.
+	Made []PlanCutReport `json:"made"`
+}
+
+// PlanCutReport is what one entry of the plan did.
+type PlanCutReport struct {
+	Name          string           `json:"name"`
+	Cuts          int              `json:"cuts"`
+	Pins          cut.PinSpec      `json:"pins"`
+	PinsPlaced    int              `json:"pinsPlaced"`
+	PinsRequested int              `json:"pinsRequested"`
+	PinsSkipped   []cut.SkippedPin `json:"pinsSkipped"`
+}
+
+// ExecutePlan rebuilds the part tree from the plan.
+//
+// The tree is discarded and rebuilt from the mesh as loaded, so the result is the
+// plan's result and not a mixture of it with whatever was cut before. That is what
+// makes editing an entry and pressing Cut now again do what it looks like it does.
+func (a *App) ExecutePlan() (*ExecuteOutcome, error) {
+	out := &ExecuteOutcome{Watertight: true}
+
+	// One event pair for the whole run, however many entries it holds. Fifty entries
+	// must not produce fifty pairs — AutoSplit already learnt that.
+	a.emit("cut:start")
+	defer a.emit("cut:done")
+
+	err := a.session.Replay(func(tr *Tree, p *Plan) error {
+		enabled := p.Enabled()
+		if len(enabled) == 0 {
+			return errors.New("the cut plan is empty; add a plane first")
+		}
+
+		for _, entry := range enabled {
+			if entry.Separate {
+				n, err := separateLocked(tr, entry.Target)
+				if err != nil {
+					out.Skipped = append(out.Skipped, fmt.Sprintf("%s: %v", entry.Name, err))
+					continue
+				}
+				out.CutsMade += n
+				out.Made = append(out.Made, PlanCutReport{Name: entry.Name, Cuts: n})
+				continue
+			}
+
+			spec, err := specFrom(entry.Plane)
+			if err != nil {
+				out.Skipped = append(out.Skipped, fmt.Sprintf("%s: %v", entry.Name, err))
+				continue
+			}
+
+			targets := planTargets(tr, entry.Target)
+			if len(targets) == 0 {
+				out.Skipped = append(out.Skipped, fmt.Sprintf(
+					"%s: no part called %q is left to cut — an earlier planned cut that produced it "+
+						"may have been deleted or disabled", entry.Name, entry.Target))
+				continue
+			}
+
+			report := PlanCutReport{Name: entry.Name, Pins: entry.Pins}
+			made := 0
+			for _, id := range targets {
+				res, err := a.cutPartLocked(tr, id, spec, entry.Pins)
+				if err != nil {
+					// A wildcard entry is expected to miss most leaves; only a named
+					// target failing is worth reporting.
+					if entry.Target != "" {
+						out.Skipped = append(out.Skipped, fmt.Sprintf("%s: %v", entry.Name, err))
+					}
+					continue
+				}
+				made++
+				out.CutsMade++
+				if !res.Watertight {
+					out.Watertight = false
+				}
+				out.Warnings = append(out.Warnings, res.Warnings...)
+				report.PinsPlaced += res.PinsPlaced
+				report.PinsRequested += res.PinsRequested
+				report.PinsSkipped = append(report.PinsSkipped, res.PinsSkipped...)
+			}
+			if made > 0 {
+				report.Cuts = made
+				out.Made = append(out.Made, report)
+			}
+			if made == 0 && entry.Target == "" {
+				out.Skipped = append(out.Skipped, fmt.Sprintf(
+					"%s: its rectangle does not cross any piece", entry.Name))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out.Tree = a.view()
+	out.Plan = a.planView()
+	return out, nil
+}
+
+// separateLocked splits a named part into its bodies, with the lock already held.
+// Shared by SeparateBodies and by the plan, so both produce the same tree.
+func separateLocked(tr *Tree, name string) (int, error) {
+	var part *Part
+	for _, p := range tr.Leaves() {
+		if p.Name == name {
+			part = p
+		}
+	}
+	if part == nil {
+		return 0, fmt.Errorf("no part called %q is left to separate", name)
+	}
+	eps := part.Mesh.Epsilon()
+	bodies := shells.Split(part.Mesh, eps)
+	if len(bodies) < 2 {
+		return 0, nil // one body: nothing to do, and not an error
+	}
+	sound := make([]bool, len(bodies))
+	for i, b := range bodies {
+		sound[i] = meshcheck.Check(b, eps).OK()
+	}
+	if _, err := tr.SplitMany(part.ID, bodies, sound); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
+// planTargets returns the ids of the leaves an entry applies to. An empty name means
+// every leaf, and Split itself decides which of them the rectangle actually crosses.
+func planTargets(tr *Tree, name string) []string {
+	var out []string
+	for _, p := range tr.Leaves() {
+		if name == "" || p.Name == name {
+			out = append(out, p.ID)
+		}
+	}
+	return out
 }
 
 // PlateOutcome reports what the 3MF export produced.
@@ -469,6 +753,40 @@ type PlaneInput struct {
 	Height float64    `json:"height"`
 }
 
+// specFrom turns the gizmo's report into a validated cut spec. Shared by Cut and by
+// the plan, so a plane refused in one is refused in the other.
+func specFrom(p PlaneInput) (cut.Spec, error) {
+	spec := cut.Spec{
+		Origin: geom.Vec3{p.Origin[0], p.Origin[1], p.Origin[2]},
+		Normal: geom.Vec3{p.Normal[0], p.Normal[1], p.Normal[2]},
+		U:      geom.Vec3{p.U[0], p.U[1], p.U[2]},
+		V:      geom.Vec3{p.V[0], p.V[1], p.V[2]},
+		Width:  p.Width,
+		Height: p.Height,
+	}
+	// The gizmo may not send a basis; derive one when it is absent.
+	if spec.U == (geom.Vec3{}) || spec.V == (geom.Vec3{}) {
+		spec = cut.SpecFromNormal(spec.Origin, spec.Normal, spec.Width, spec.Height)
+	}
+	if err := spec.Validate(); err != nil {
+		return cut.Spec{}, err
+	}
+	return spec, nil
+}
+
+// planeFromSpec is the reverse, for turning a planned auto-split step into an entry the
+// gizmo can also load and show.
+func planeFromSpec(s cut.Spec) PlaneInput {
+	return PlaneInput{
+		Origin: [3]float64{s.Origin[0], s.Origin[1], s.Origin[2]},
+		Normal: [3]float64{s.Normal[0], s.Normal[1], s.Normal[2]},
+		U:      [3]float64{s.U[0], s.U[1], s.U[2]},
+		V:      [3]float64{s.V[0], s.V[1], s.V[2]},
+		Width:  s.Width,
+		Height: s.Height,
+	}
+}
+
 // CutOutcome is what the frontend needs after a cut: the new tree, and an honest
 // account of how well it went.
 type CutOutcome struct {
@@ -492,19 +810,8 @@ type CutOutcome struct {
 // on screen and fails to print, which is the one outcome this application must
 // never produce.
 func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, error) {
-	spec := cut.Spec{
-		Origin: geom.Vec3{p.Origin[0], p.Origin[1], p.Origin[2]},
-		Normal: geom.Vec3{p.Normal[0], p.Normal[1], p.Normal[2]},
-		U:      geom.Vec3{p.U[0], p.U[1], p.U[2]},
-		V:      geom.Vec3{p.V[0], p.V[1], p.V[2]},
-		Width:  p.Width,
-		Height: p.Height,
-	}
-	// The gizmo may not send a basis; derive one when it is absent.
-	if spec.U == (geom.Vec3{}) || spec.V == (geom.Vec3{}) {
-		spec = cut.SpecFromNormal(spec.Origin, spec.Normal, spec.Width, spec.Height)
-	}
-	if err := spec.Validate(); err != nil {
+	spec, err := specFrom(p)
+	if err != nil {
 		return nil, err
 	}
 
@@ -519,9 +826,24 @@ func (a *App) Cut(partID string, p PlaneInput, pins cut.PinSpec) (*CutOutcome, e
 // Spec comes from — so the part tree, the undo history, pin placement and the
 // watertightness reporting behave identically for both.
 func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutcome, error) {
+	var out *CutOutcome
+	err := a.session.WithTree(func(tr *Tree) error {
+		var err error
+		out, err = a.cutPartLocked(tr, partID, spec, pins)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// cutPartLocked is cutPart with the session lock already held, so ExecutePlan can make
+// every cut of a plan inside one lock — a half-rebuilt tree must never be visible.
+func (a *App) cutPartLocked(tr *Tree, partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutcome, error) {
 	var res *cut.Result
 	var pinRes *cut.PinResult
-	err := a.session.WithTree(func(tr *Tree) error {
+	err := func(tr *Tree) error {
 		part := tr.Find(partID)
 		if part == nil {
 			return fmt.Errorf("no part with id %q", partID)
@@ -551,7 +873,7 @@ func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutco
 		_, _, err = tr.Split(partID, res.Part1, res.Part2,
 			res.Part1Check.OK(), res.Part2Check.OK())
 		return err
-	})
+	}(tr)
 	if err != nil {
 		return nil, err
 	}
@@ -561,7 +883,7 @@ func (a *App) cutPart(partID string, spec cut.Spec, pins cut.PinSpec) (*CutOutco
 		requested = pins.Count
 	}
 	return &CutOutcome{
-		Tree:          a.view(),
+		Tree:          viewOf(tr),
 		Watertight:    res.Watertight(),
 		Warnings:      append(res.Warnings, pinRes.Warnings...),
 		PinsPlaced:    pinRes.Placed,

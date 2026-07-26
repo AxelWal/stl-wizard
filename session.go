@@ -24,6 +24,14 @@ const maxTriangles = 3_000_000
 type Session struct {
 	mu   sync.Mutex
 	tree *Tree
+
+	// plan is the cuts asked for but not yet made, and origin is the mesh as it was
+	// loaded. Cut now rebuilds the tree from origin by replaying the plan, so the
+	// tree cannot be the source: the root releases its mesh into the undo history
+	// the moment it is split.
+	plan     Plan
+	origin   *stl.Mesh
+	originNm string
 }
 
 func (s *Session) Loaded() bool {
@@ -40,7 +48,47 @@ func (s *Session) Load(name string, m *stl.Mesh) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tree = NewTree(name, m)
+	s.origin, s.originNm = m, name
+	// A plan names parts of the model it was built against, so keeping it across a
+	// load would leave every entry targeting something that does not exist. Reset
+	// rather than Clear: a new model starts counting at "Cut 1".
+	s.plan.Reset()
 	return nil
+}
+
+// WithPlan runs fn with the plan under the lock, and reports whether a model is open —
+// a plan without a model is meaningless, since every entry targets one of its parts.
+func (s *Session) WithPlan(fn func(*Plan) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tree == nil {
+		return errors.New("no model is open")
+	}
+	return fn(&s.plan)
+}
+
+// WithTreeAndPlan runs fn with both under one lock. AddPlane needs it: which part is
+// selected and appending the entry that names it have to be one atomic step, or a cut
+// arriving between them would leave the entry targeting a part that has just been split.
+func (s *Session) WithTreeAndPlan(fn func(*Tree, *Plan) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tree == nil {
+		return errors.New("no model is open")
+	}
+	return fn(s.tree, &s.plan)
+}
+
+// Replay rebuilds the tree from the mesh as loaded and hands it, with the plan, to fn.
+// Everything happens under one lock: a half-rebuilt tree must never be visible.
+func (s *Session) Replay(fn func(*Tree, *Plan) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.origin == nil {
+		return errors.New("no model is open")
+	}
+	s.tree = NewTree(s.originNm, s.origin)
+	return fn(s.tree, &s.plan)
 }
 
 // Tree returns the live tree. Callers must not mutate it; use WithTree for that.

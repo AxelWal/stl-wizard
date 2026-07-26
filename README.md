@@ -4,6 +4,9 @@ Splits STL models into printable parts with a **bounded** cutting plane: the
 plane is restricted to a rectangle, so one cut can take the top off one arm of a
 U-shaped model without touching the other.
 
+Nothing is cut until you say so. Both cut paths **propose** into a named, editable
+plan, and **Cut now** applies it.
+
 - Alignment pins, with configurable diameter, length, clearance and a
   minimum wall guard, so printed pieces peg together instead of just
   matching at the cut. Either a printed peg on one side, or a matching hole
@@ -184,6 +187,36 @@ large file:
     go run ./cmd/meshrepair -in model.stl                 # just the verdict
     go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
+## The cut plan
+
+**Add plane** and **Plan fit to printer** add entries to a list; neither cuts anything.
+**Cut now** applies the plan.
+
+Each entry gets a numbered default name you can type over, a tick to leave it out
+without losing where its plane was, and a delete button. Clicking an entry loads its
+plane back under the gizmo and draws it, so it can be moved and put back with **Save
+plane**. Only the selected entry's plane is drawn — fifty rectangles at once would hide
+the model.
+
+**The plan is the source of truth and the part tree is derived from it.** Cut now
+discards the tree and rebuilds it from the mesh as loaded, so editing an entry and
+pressing it again gives the edited plan's result rather than a mixture of the old cuts
+and the new ones, and the list and the tree cannot disagree. The cost is re-cutting from
+scratch each time: at roughly 5µs per triangle a fifty-entry plan on a large model is
+minutes, which is the trade for reviewing and editing cheaply and executing once.
+
+An entry aims at a part by **name**, not by id, because rebuilding is deterministic so
+names are reproducible while an id would be freshly minted each time and match nothing.
+Auto-split's entries aim at nothing in particular, meaning every piece their bounded
+rectangle crosses. Delete an entry another one depended on and that one is **skipped
+and named**, never quietly dropped.
+
+Separating bodies is an entry too. It has to be: rebuilding from the plan would
+otherwise throw a separation away the next time Cut now ran.
+
+Not implemented: reordering entries. Order comes out of how you add them, and
+delete-and-re-add covers it.
+
 ## Printer sizes
 
 The Printer select offers all fourteen Bambu Lab models, or Custom for anything else.
@@ -301,7 +334,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-61 tests over every GUI feature, pointer input included. See CLAUDE.md.
+71 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

@@ -151,7 +151,7 @@ test("cutting the U's left arm leaves the right arm at full height", async (app)
   await app.planeAcrossTheArms(U_LEFT_ARM);
   const msg = await app.cut();
 
-  expect.contains(msg, "Both pieces are closed solids", "the cut to succeed");
+  expect.contains(msg, "All pieces are closed solids", "the cut to succeed");
 
   const parts = await app.parts();
   expect.equal(parts.length, 2, "part count");
@@ -225,6 +225,174 @@ test("repeated failed cuts never leave the progress bar on screen", async (app) 
   await app.cut();
   expect.equal((await app.parts()).length, 2, "a genuine cut still succeeds");
   expect.equal(await app.hidden("#progress"), true, "the progress bar after a successful cut");
+});
+
+group("the cut plan");
+
+// The whole point of the feature: pressing the button proposes, it does not cut.
+test("adding a plane cuts nothing until Cut now", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+
+  const msg = await app.addPlane();
+  expect.contains(msg, "Nothing is cut until you press Cut now", "the reassurance");
+  expect.equal((await app.parts()).length, 1, "the model is still whole");
+  expect.equal(await app.disabled("#do-undo"), true, "nothing to undo, because nothing happened");
+
+  const plan = await app.plan();
+  expect.equal(plan.cuts.length, 1, "one planned cut");
+  expect.equal(plan.cuts[0].name, "Cut 1", "a numbered default name");
+  expect.equal(plan.cuts[0].target, "whole", "aimed at the selected part");
+  expect.ok(plan.cuts[0].enabled, "enabled by default");
+
+  await app.execute();
+  expect.equal((await app.parts()).length, 2, "now it is cut");
+});
+
+test("planned cuts are numbered and listed in order", async (app) => {
+  await app.open("u");
+  for (const pos of [20, 25, 30]) {
+    await app.planeAcrossTheArms({ position: [15, pos, 5], width: 200, height: 200 });
+    await app.addPlane();
+  }
+  expect.equal((await app.planNames()).join(","), "Cut 1,Cut 2,Cut 3", "names in order");
+
+  // The list has to show them in the same order, or the order it runs in is invisible.
+  const shown = await app.page.evaluate(() =>
+    [...document.querySelectorAll("#plan .plan-name")].map((e) => e.textContent)
+  );
+  expect.equal(shown.join(","), "Cut 1,Cut 2,Cut 3", "the list is in plan order");
+});
+
+test("a planned cut can be renamed", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+
+  await app.page.evaluate(() => {
+    const el = document.querySelector("#plan .plan-name");
+    el.textContent = "left arm";
+    el.dispatchEvent(new Event("blur"));
+  });
+  await app.page.waitForFunction(() => window.app.plan().cuts[0].name === "left arm", null, { timeout: 5000 });
+
+  // And it survives running the plan — the list is state, not a transient label.
+  await app.execute();
+  expect.equal((await app.planNames())[0], "left arm", "the name after executing");
+});
+
+test("deleting a planned cut removes it from the plan and the result", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  await app.planeAcrossTheArms({ position: [15, 30, 5], width: 200, height: 200 });
+  await app.addPlane();
+  expect.equal((await app.plan()).cuts.length, 2, "two planned");
+
+  await app.page.evaluate(() => document.querySelectorAll("#plan .plan-delete")[0].click());
+  await app.page.waitForFunction(() => window.app.plan().cuts.length === 1, null, { timeout: 5000 });
+  expect.equal((await app.planNames()).join(","), "Cut 2", "the survivor keeps its own name");
+
+  await app.execute();
+  expect.equal((await app.parts()).length, 2, "only the remaining cut ran");
+});
+
+test("unticking a planned cut leaves it out without losing it", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  await app.planeAcrossTheArms({ position: [15, 30, 5], width: 200, height: 200 });
+  await app.addPlane();
+
+  await app.page.evaluate(() => document.querySelectorAll('#plan input[type="checkbox"]')[1].click());
+  await app.page.waitForFunction(() => window.app.plan().cuts[1].enabled === false, null, { timeout: 5000 });
+
+  const msg = await app.execute();
+  expect.contains(msg, "Made 1 cut(s)", "only the enabled one ran");
+  expect.equal((await app.plan()).cuts.length, 2, "the disabled cut is still in the list");
+});
+
+// Re-positioning: click an entry, move the gizmo, save it back over that entry.
+test("a planned cut can be selected, moved and saved", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+
+  // Move the gizmo somewhere else, then select the entry: its plane must come back.
+  await app.planeAcrossTheArms({ position: [15, 5, 5], width: 60, height: 60 });
+  await app.page.evaluate(() => document.querySelector("#plan .row").click());
+  const restored = await app.page.evaluate(() => window.app.planeInput());
+  expect.near(restored.origin[1], 25, 0.01, "the entry's plane came back into the gizmo");
+  expect.near(restored.width, 15, 0.01, "and its extent");
+  expect.equal(await app.hidden("#save-plane"), false, "Save plane appears once an entry is selected");
+
+  // Now move it and save. The bounded 15mm rectangle becomes an unbounded one.
+  await app.planeAcrossTheArms({ position: [15, 25, 5], width: 200, height: 200 });
+  await app.act("save-plane");
+  await app.execute();
+
+  const parts = await app.parts();
+  // Unbounded at y=25 takes both arms' tops: 3000 away, 6000 left. The bounded
+  // original would have given 1500 / 7500.
+  expect.ok(
+    parts.some((p) => p.volume === 3000),
+    `the moved plane's result, got ${parts.map((p) => p.volume).join(", ")}`
+  );
+  expect.ok(!parts.some((p) => p.volume === 1500), "not the original plane's result");
+});
+
+test("fit to printer proposes a plan and cuts nothing yet", async (app) => {
+  await app.open("u");
+  await app.setBed({ x: 20, y: 20, z: 20 });
+
+  const msg = await app.planFitToPrinter();
+  expect.contains(msg, "Nothing is cut until you press Cut now", "it only proposes");
+  expect.equal((await app.parts()).length, 1, "the model is still whole");
+
+  const plan = await app.plan();
+  expect.ok(plan.cuts.length >= 3, `several planned cuts, got ${plan.cuts.length}`);
+  for (const c of plan.cuts) {
+    expect.equal(c.target, "", "auto-split entries apply wherever their rectangle lands");
+  }
+
+  await app.execute();
+  expect.ok((await app.parts()).length >= 4, "executing produces the pieces");
+});
+
+// Cut now rebuilds the tree from the plan, so a separation made outside the plan would
+// vanish. It is recorded as an entry for exactly that reason.
+test("separating bodies is recorded in the plan and survives Cut now", async (app) => {
+  await app.open("touchingcubes");
+  await app.act("do-separate");
+
+  const plan = await app.plan();
+  expect.equal(plan.cuts.length, 1, "the separation is an entry");
+  expect.ok(plan.cuts[0].separate, "marked as a separation");
+  expect.contains(plan.cuts[0].name, "Separate", "named for what it does");
+
+  await app.execute();
+  const parts = await app.parts();
+  expect.equal(parts.length, 2, "both bodies survive rebuilding from the plan");
+  for (const p of parts) expect.ok(p.closed, `${p.label} to be closed`);
+});
+
+test("clearing the plan empties the list", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  await app.page.click("#clear-plan");
+  await app.page.waitForFunction(() => window.app.plan().cuts.length === 0, null, { timeout: 5000 });
+  expect.equal(await app.disabled("#do-execute"), true, "Cut now has nothing to do");
+});
+
+test("loading a model clears the plan", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  expect.equal((await app.plan()).cuts.length, 1, "one planned");
+
+  await app.open("cube");
+  expect.equal((await app.plan()).cuts.length, 0, "a plan aimed at another model's parts is gone");
 });
 
 group("parts and selection");
@@ -819,7 +987,7 @@ test("choosing a printer drives what auto-split actually does", async (app) => {
   await app.page.fill("#bed-x", "12");
   await app.page.fill("#bed-y", "12");
   await app.page.fill("#bed-z", "12");
-  expect.contains(await app.autosplit(), "Split into", "a 12mm bed splits the 20mm sphere");
+  expect.contains(await app.autosplit(), "cut(s) from the plan", "a 12mm bed splits the 20mm sphere");
 });
 
 group("fit to printer");
@@ -829,7 +997,7 @@ test("a bed smaller than the model splits until every piece fits", async (app) =
   await app.setBed({ x: 20, y: 20, z: 20 });
   const msg = await app.autosplit();
 
-  expect.contains(msg, "Split into", "the run is reported");
+  expect.contains(msg, "Made 3 cut(s) from the plan", "the run is reported");
   const parts = await app.parts();
   expect.ok(parts.length >= 4, `at least four pieces, got ${parts.length}`);
 
@@ -860,6 +1028,7 @@ test("a bed of zero reports an error rather than hanging", async (app) => {
   const msg = await app.autosplit();
 
   expect.ok(msg.length > 0, "some readable message");
+  expect.equal(await app.disabled("#do-execute"), true, "nothing runnable was planned");
   expect.absent(msg, "panic", "no stack trace");
   expect.equal((await app.parts()).length, 1, "the model is untouched");
 });

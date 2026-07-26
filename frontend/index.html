@@ -35,7 +35,14 @@
           <button id="mode-rotate">Rotate</button>
           <label>Width <input id="plane-width" type="number" step="0.1" min="0.01" /></label>
           <label>Height <input id="plane-height" type="number" step="0.1" min="0.01" /></label>
-          <button id="do-cut">Cut</button>
+          <button id="do-cut">Add plane</button>
+          <button id="save-plane" hidden>Save plane</button>
+        </div>
+        <div id="plan-panel" hidden>
+          <h2>Cut plan</h2>
+          <ul id="plan"></ul>
+          <button id="do-execute">Cut now</button>
+          <button id="clear-plan">Clear plan</button>
         </div>
         <div id="pin-controls" hidden>
           <h2>Alignment pins</h2>
@@ -86,7 +93,7 @@
           <label>Bed X mm <input id="bed-x" type="number" min="1" step="1" value="220" /></label>
           <label>Bed Y mm <input id="bed-y" type="number" min="1" step="1" value="220" /></label>
           <label>Bed Z mm <input id="bed-z" type="number" min="1" step="1" value="250" /></label>
-          <button id="do-autosplit">Split to fit</button>
+          <button id="do-autosplit">Plan fit to printer</button>
           <button id="do-plates">Export 3MF plates…</button>
         </div>
         <div id="actions" hidden>

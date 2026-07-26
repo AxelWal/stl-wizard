@@ -125,13 +125,14 @@ that produced the figures above.
 
 ## Selectors
 
-    #open              Open STL…          #do-cut          run the cut
+    #open              Open STL…          #do-cut          add a plane to the plan
     #status            state line         #do-undo         undo one cut
     #tree              parts list         #do-export       export parts…
     #part-info         measurements       #do-autosplit    split to fit
     #messages          results, warnings  #viewport        three.js canvas
     #progress          long-cut bar       #progress-bar    its fill
 
+    #plan #do-execute #clear-plan #save-plane   the cut plan
     #repair-on-load                       repair holes as the model loads
     #do-separate                          split a part into its bodies
     #do-plates                            export a multi-plate 3MF
@@ -158,7 +159,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 61
+    node e2e/gui.test.mjs              # all 71
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -218,6 +219,31 @@ nothing about behaviour — that is what the browser run above is for.
   `TransformControls.getHelper()` instead; see `frontend/gizmo.js:179`.
 - `wails dev` reloads the page on every save, so a half-finished multi-file
   edit will throw in the console. Re-check after the last edit lands.
+
+## The cut plan
+
+Nothing cuts on its own any more. `AddPlane` and `PlanFitToPrinter` append entries;
+`ExecutePlan` applies them. `Cut` survives as the Go primitive and `ExecutePlan` calls
+the same `cutPartLocked`, so the Go tests covering cutting did not have to change — and
+the e2e harness's `app.cut()` does add-then-execute so the tests written before the plan
+still assert what they were written to assert.
+
+**The plan is the source of truth; the tree is derived.** `Session.Replay` throws the
+tree away and rebuilds from `origin` — the mesh as loaded — because the root releases its
+mesh into the undo history the moment it is split, so the tree cannot be the source.
+Two consequences that are easy to get wrong:
+
+- **Anything that shapes the tree must be a plan entry**, or rebuilding silently
+  discards it. Separating bodies is recorded as an entry with `Separate: true` for
+  exactly that reason; without it, Cut now threw the separation away.
+- `Target` is a part **name**. Rebuilding is deterministic so names are stable; an id
+  would be freshly minted each run.
+
+`Plan.clone()` must never return nil — a nil slice marshals as JSON `null`, the frontend
+read `.some()` off it and the whole module died on load. `Load` calls `Plan.Reset()`
+rather than `Clear()`, so a new model counts from "Cut 1"; `Clear()` deliberately keeps
+the counter, since a name the user has already seen should not be handed out twice for
+the same model.
 
 ## 3MF export
 

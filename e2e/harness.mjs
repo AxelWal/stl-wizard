@@ -354,8 +354,35 @@ function makeApp(page) {
       return api.messages();
     },
 
-    cut: () => api.act("do-cut"),
-    autosplit: () => api.act("do-autosplit"),
+    // cut adds a plane and then runs the plan, because that is what cutting is now:
+    // both paths propose into an editable list and only Cut now acts. Kept as one
+    // helper so the tests written before the plan existed still assert what they were
+    // written to assert, rather than being rewritten around the new flow.
+    async cut() {
+      await api.act("do-cut");
+      return api.act("do-execute");
+    },
+
+    // addPlane and execute for tests that care about the two halves separately.
+    addPlane: () => api.act("do-cut"),
+    execute: () => api.act("do-execute"),
+
+    // autosplit plans and then runs, for the same reason.
+    async autosplit() {
+      const planned = await api.act("do-autosplit");
+      // Nothing to run: either the model already fits, or planning was refused. Cut
+      // now is disabled in both cases, so clicking it would hang the test rather than
+      // fail it.
+      if (await api.disabled("#do-execute")) return planned;
+      return planned + (await api.act("do-execute"));
+    },
+
+    // planOnly stops after proposing, for asserting that nothing was cut.
+    planFitToPrinter: () => api.act("do-autosplit"),
+
+    plan: () => page.evaluate(() => window.app.plan()),
+
+    planNames: () => page.evaluate(() => window.app.plan().cuts.map((c) => c.name)),
 
     // Undo reports nothing on success, so it waits on the tree instead.
     async undo() {

@@ -257,25 +257,46 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class ExportOutcome {
-	    dir: string;
-	    files: string[];
-	    notWatertight: string[];
-	    cancelled: boolean;
+	export class PlanCutReport {
+	    name: string;
+	    cuts: number;
+	    pins: cut.PinSpec;
+	    pinsPlaced: number;
+	    pinsRequested: number;
+	    pinsSkipped: cut.SkippedPin[];
 	
 	    static createFrom(source: any = {}) {
-	        return new ExportOutcome(source);
+	        return new PlanCutReport(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.dir = source["dir"];
-	        this.files = source["files"];
-	        this.notWatertight = source["notWatertight"];
-	        this.cancelled = source["cancelled"];
+	        this.name = source["name"];
+	        this.cuts = source["cuts"];
+	        this.pins = this.convertValues(source["pins"], cut.PinSpec);
+	        this.pinsPlaced = source["pinsPlaced"];
+	        this.pinsRequested = source["pinsRequested"];
+	        this.pinsSkipped = this.convertValues(source["pinsSkipped"], cut.SkippedPin);
 	    }
-	}
 	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class PlaneInput {
 	    origin: number[];
 	    normal: number[];
@@ -298,6 +319,143 @@ export namespace main {
 	        this.height = source["height"];
 	    }
 	}
+	export class PlannedCut {
+	    id: string;
+	    name: string;
+	    plane: PlaneInput;
+	    pins: cut.PinSpec;
+	    target: string;
+	    separate: boolean;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlannedCut(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.plane = this.convertValues(source["plane"], PlaneInput);
+	        this.pins = this.convertValues(source["pins"], cut.PinSpec);
+	        this.target = source["target"];
+	        this.separate = source["separate"];
+	        this.enabled = source["enabled"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PlanView {
+	    cuts: PlannedCut[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PlanView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.cuts = this.convertValues(source["cuts"], PlannedCut);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExecuteOutcome {
+	    tree?: TreeView;
+	    plan?: PlanView;
+	    cutsMade: number;
+	    watertight: boolean;
+	    warnings: string[];
+	    skipped: string[];
+	    made: PlanCutReport[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ExecuteOutcome(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tree = this.convertValues(source["tree"], TreeView);
+	        this.plan = this.convertValues(source["plan"], PlanView);
+	        this.cutsMade = source["cutsMade"];
+	        this.watertight = source["watertight"];
+	        this.warnings = source["warnings"];
+	        this.skipped = source["skipped"];
+	        this.made = this.convertValues(source["made"], PlanCutReport);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ExportOutcome {
+	    dir: string;
+	    files: string[];
+	    notWatertight: string[];
+	    cancelled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportOutcome(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dir = source["dir"];
+	        this.files = source["files"];
+	        this.notWatertight = source["notWatertight"];
+	        this.cancelled = source["cancelled"];
+	    }
+	}
+	
+	
+	
+	
+	
 	export class PlateReport {
 	    name: string;
 	    plate: number;

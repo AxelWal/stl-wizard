@@ -1,0 +1,473 @@
+package main
+
+import (
+	"context"
+	"math"
+	"strings"
+	"testing"
+
+	"stl-cutter/internal/cut"
+	"stl-cutter/internal/fixtures"
+)
+
+// acrossTheArms is the plane that cuts the U at y=25 spanning everything.
+func acrossTheArms() PlaneInput {
+	return PlaneInput{
+		Origin: [3]float64{15, 25, 5},
+		Normal: [3]float64{0, 1, 0},
+		Width:  200,
+		Height: 200,
+	}
+}
+
+// leftArmOnly is the bounded rectangle covering only the U's left arm.
+func leftArmOnly() PlaneInput {
+	return PlaneInput{
+		Origin: [3]float64{7.5, 25, 5},
+		Normal: [3]float64{0, 1, 0},
+		Width:  15,
+		Height: 20,
+	}
+}
+
+func loadU(t *testing.T) *App {
+	t.Helper()
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10)), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	return app
+}
+
+// The whole point: adding a plane must not cut anything.
+func TestAddPlaneCutsNothing(t *testing.T) {
+	app := loadU(t)
+
+	pv, err := app.AddPlane(leftArmOnly(), cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	if len(pv.Cuts) != 1 {
+		t.Fatalf("got %d planned cuts, want 1", len(pv.Cuts))
+	}
+
+	tree := app.view()
+	if !tree.Root.IsLeaf() {
+		t.Error("the model was cut; adding a plane must only plan")
+	}
+	if tree.CanUndo {
+		t.Error("nothing was cut, so there should be nothing to undo")
+	}
+}
+
+func TestPlannedCutsGetNumberedDefaultNames(t *testing.T) {
+	app := loadU(t)
+	for i := 0; i < 3; i++ {
+		if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+			t.Fatalf("AddPlane %d: %v", i, err)
+		}
+	}
+	pv := app.Plan()
+	for i, want := range []string{"Cut 1", "Cut 2", "Cut 3"} {
+		if pv.Cuts[i].Name != want {
+			t.Errorf("cut %d is named %q, want %q", i, pv.Cuts[i].Name, want)
+		}
+	}
+}
+
+// Numbering must not be reused, or two entries would carry the same label and be
+// indistinguishable in the list.
+func TestDeletingAPlannedCutDoesNotRecycleItsNumber(t *testing.T) {
+	app := loadU(t)
+	for i := 0; i < 2; i++ {
+		if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+			t.Fatalf("AddPlane: %v", err)
+		}
+	}
+	pv := app.Plan()
+	if _, err := app.DeletePlane(pv.Cuts[0].ID); err != nil {
+		t.Fatalf("DeletePlane: %v", err)
+	}
+	pv, err := app.AddPlane(leftArmOnly(), cut.PinSpec{})
+	if err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	names := []string{}
+	for _, c := range pv.Cuts {
+		names = append(names, c.Name)
+	}
+	if got := strings.Join(names, ","); got != "Cut 2,Cut 3" {
+		t.Errorf("names are %q, want \"Cut 2,Cut 3\" — a number must not be handed out twice", got)
+	}
+}
+
+// An empty plan must be an empty list, not a null. A nil slice marshals as JSON null,
+// and the frontend reading .some() off that killed the whole module on load.
+func TestAnEmptyPlanIsAnEmptyListNotNull(t *testing.T) {
+	app := loadU(t)
+	if got := app.Plan().Cuts; got == nil {
+		t.Error("Plan().Cuts is nil; it must be an empty slice so it marshals as []")
+	}
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	pv, err := app.ClearPlan()
+	if err != nil {
+		t.Fatalf("ClearPlan: %v", err)
+	}
+	if pv.Cuts == nil {
+		t.Error("Cuts is nil after clearing; it must be an empty slice")
+	}
+}
+
+func TestRenameAndDeleteAndDisable(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	id := app.Plan().Cuts[0].ID
+
+	if _, err := app.RenamePlane(id, "left arm"); err != nil {
+		t.Fatalf("RenamePlane: %v", err)
+	}
+	if got := app.Plan().Cuts[0].Name; got != "left arm" {
+		t.Errorf("name = %q, want \"left arm\"", got)
+	}
+	if _, err := app.RenamePlane(id, "  "); err == nil {
+		t.Error("an all-whitespace name should be refused")
+	}
+
+	if _, err := app.SetPlaneEnabled(id, false); err != nil {
+		t.Fatalf("SetPlaneEnabled: %v", err)
+	}
+	if app.Plan().Cuts[0].Enabled {
+		t.Error("the cut is still enabled")
+	}
+
+	if _, err := app.DeletePlane(id); err != nil {
+		t.Fatalf("DeletePlane: %v", err)
+	}
+	if len(app.Plan().Cuts) != 0 {
+		t.Error("the cut was not removed")
+	}
+	if _, err := app.DeletePlane(id); err == nil {
+		t.Error("deleting an unknown id should be an error")
+	}
+}
+
+// One entry must give exactly what Cut gives for the same plane, or the plan is a
+// second implementation of cutting rather than a queue for the one that exists.
+func TestExecutingOneEntryMatchesAnImmediateCut(t *testing.T) {
+	direct := loadU(t)
+	if _, err := direct.Cut(direct.view().Root.ID, leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	planned := loadU(t)
+	if _, err := planned.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	out, err := planned.ExecutePlan()
+	if err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	if out.CutsMade != 1 {
+		t.Errorf("CutsMade = %d, want 1", out.CutsMade)
+	}
+	if !out.Watertight {
+		t.Errorf("the plan's cut is not watertight; warnings %v", out.Warnings)
+	}
+
+	want := volumes(direct.view())
+	got := volumes(out.Tree)
+	if len(got) != len(want) {
+		t.Fatalf("got %d parts, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > 1e-6 {
+			t.Errorf("part %d volume = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// The plan is the source of truth, so executing it twice has to give the same tree.
+// Anything else means the second run built on the first instead of replacing it.
+func TestExecutingTwiceGivesTheSameTree(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	first, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("first execute: %v", err)
+	}
+	second, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("second execute: %v", err)
+	}
+
+	if second.CutsMade != first.CutsMade {
+		t.Errorf("CutsMade went from %d to %d", first.CutsMade, second.CutsMade)
+	}
+	a, b := volumes(first.Tree), volumes(second.Tree)
+	if len(a) != len(b) {
+		t.Fatalf("part counts differ: %d then %d", len(a), len(b))
+	}
+	for i := range a {
+		if math.Abs(a[i]-b[i]) > 1e-6 {
+			t.Errorf("part %d volume went from %v to %v", i, a[i], b[i])
+		}
+	}
+}
+
+// Editing an entry and executing again must give the edited result, not the old one.
+func TestEditingAnEntryChangesWhatIsCut(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	out, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// The bounded cut takes only the left arm's top: 1500.
+	if !hasVolume(out.Tree, 1500) {
+		t.Fatalf("expected a 1500mm³ piece, got %v", volumes(out.Tree))
+	}
+
+	id := app.Plan().Cuts[0].ID
+	if _, err := app.UpdatePlane(id, acrossTheArms(), cut.PinSpec{}); err != nil {
+		t.Fatalf("UpdatePlane: %v", err)
+	}
+	out, err = app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("re-execute: %v", err)
+	}
+	// Unbounded across x, the same height takes both arms' tops: 3000.
+	if !hasVolume(out.Tree, 3000) {
+		t.Errorf("expected a 3000mm³ piece after widening the plane, got %v", volumes(out.Tree))
+	}
+	if hasVolume(out.Tree, 1500) {
+		t.Error("the old bounded result survived; the tree was not rebuilt from the plan")
+	}
+}
+
+func TestADisabledEntryIsNotCut(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	if _, err := app.AddPlane(acrossTheArms(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	id := app.Plan().Cuts[1].ID
+	if _, err := app.SetPlaneEnabled(id, false); err != nil {
+		t.Fatalf("SetPlaneEnabled: %v", err)
+	}
+
+	out, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if out.CutsMade != 1 {
+		t.Errorf("CutsMade = %d, want 1 — the disabled entry should not run", out.CutsMade)
+	}
+}
+
+// An entry naming a part an earlier entry was to have produced has nothing to cut once
+// that earlier entry is gone. It has to be reported, not quietly dropped.
+func TestAnEntryWhoseTargetIsGoneIsReported(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("first AddPlane: %v", err)
+	}
+	if _, err := app.ExecutePlan(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	// Select a piece the first cut produced and plan a cut on it.
+	tv := app.view()
+	child := tv.Root.Children[0]
+	if _, err := app.Select(child.ID); err != nil {
+		t.Fatalf("Select: %v", err)
+	}
+	if _, err := app.AddPlane(acrossTheArms(), cut.PinSpec{}); err != nil {
+		t.Fatalf("second AddPlane: %v", err)
+	}
+	if out, err := app.ExecutePlan(); err != nil {
+		t.Fatalf("execute both: %v", err)
+	} else if out.CutsMade != 2 {
+		t.Fatalf("CutsMade = %d, want 2 with both entries", out.CutsMade)
+	}
+
+	// Now remove the first entry. The second targets a part nothing produces.
+	if _, err := app.DeletePlane(app.Plan().Cuts[0].ID); err != nil {
+		t.Fatalf("DeletePlane: %v", err)
+	}
+	out, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute after delete: %v", err)
+	}
+	if len(out.Skipped) != 1 {
+		t.Fatalf("got %d skipped entries, want 1: %v", len(out.Skipped), out.Skipped)
+	}
+	if !strings.Contains(out.Skipped[0], child.Name) {
+		t.Errorf("the skip message %q should name the missing part %q", out.Skipped[0], child.Name)
+	}
+	if out.CutsMade != 0 {
+		t.Errorf("CutsMade = %d; the surviving entry had nothing to cut", out.CutsMade)
+	}
+}
+
+func TestExecutingAnEmptyPlanIsRefused(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.ExecutePlan(); err == nil {
+		t.Error("executing an empty plan should be refused, not produce an uncut tree silently")
+	}
+	if !app.view().Root.IsLeaf() {
+		t.Error("the tree should be untouched")
+	}
+}
+
+// Auto-split proposes rather than cuts, and its entries apply to every piece their
+// bounded rectangle crosses.
+func TestPlanFitToPrinterProposesWithoutCutting(t *testing.T) {
+	app := loadU(t)
+	pv, err := app.PlanFitToPrinter(cut.Bed{X: 20, Y: 20, Z: 20})
+	if err != nil {
+		t.Fatalf("PlanFitToPrinter: %v", err)
+	}
+	if len(pv.Cuts) == 0 {
+		t.Fatal("no cuts were planned for a 30x40x10 model on a 20mm bed")
+	}
+	for i, c := range pv.Cuts {
+		if c.Target != "" {
+			t.Errorf("planned cut %d targets %q; auto-split entries apply to every piece they cross", i, c.Target)
+		}
+	}
+	if !app.view().Root.IsLeaf() {
+		t.Fatal("the model was cut; planning must only plan")
+	}
+
+	out, err := app.ExecutePlan()
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if out.CutsMade == 0 {
+		t.Error("executing the plan cut nothing")
+	}
+	for _, v := range sizes(out.Tree) {
+		for _, d := range v {
+			if d > 20.001 {
+				t.Errorf("a piece measures %v, above the 20mm bed", v)
+				break
+			}
+		}
+	}
+}
+
+// A plan names parts of the model it was built against, so keeping it across a load
+// would leave every entry aimed at something that does not exist.
+func TestLoadingAModelClearsThePlan(t *testing.T) {
+	app := loadU(t)
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+		t.Fatalf("AddPlane: %v", err)
+	}
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if got := len(app.Plan().Cuts); got != 0 {
+		t.Errorf("the plan still holds %d cut(s) from the previous model", got)
+	}
+}
+
+// However many entries a plan holds, the progress bar is shown and hidden once.
+func TestExecutePlanEmitsOneEventPair(t *testing.T) {
+	app := loadU(t)
+	for i := 0; i < 3; i++ {
+		if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err != nil {
+			t.Fatalf("AddPlane: %v", err)
+		}
+	}
+	starts, dones := countCutEvents(app)
+	if _, err := app.ExecutePlan(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if *starts != 1 || *dones != 1 {
+		t.Errorf("got %d start and %d done events, want 1 of each", *starts, *dones)
+	}
+}
+
+func TestPlanWithNoModelOpen(t *testing.T) {
+	app := NewApp()
+	if _, err := app.AddPlane(leftArmOnly(), cut.PinSpec{}); err == nil {
+		t.Error("adding a plane with nothing open should be an error")
+	}
+	if _, err := app.ExecutePlan(); err == nil {
+		t.Error("executing with nothing open should be an error")
+	}
+}
+
+// --- helpers ---
+
+// countCutEvents redirects the app's event sink and returns counters for the pair that
+// brackets a run, so a caller can assert one pair however many cuts happen inside.
+func countCutEvents(app *App) (starts, dones *int) {
+	starts, dones = new(int), new(int)
+	app.ctx = context.Background()
+	app.emitFunc = func(_ context.Context, name string, _ ...interface{}) {
+		switch name {
+		case "cut:start":
+			*starts++
+		case "cut:done":
+			*dones++
+		}
+	}
+	return starts, dones
+}
+
+func volumes(tv *TreeView) []float64 {
+	var out []float64
+	var walk func(*Part)
+	walk = func(p *Part) {
+		if p == nil {
+			return
+		}
+		if len(p.Children) == 0 {
+			out = append(out, p.Volume)
+			return
+		}
+		for _, c := range p.Children {
+			walk(c)
+		}
+	}
+	walk(tv.Root)
+	return out
+}
+
+func sizes(tv *TreeView) [][3]float64 {
+	var out [][3]float64
+	var walk func(*Part)
+	walk = func(p *Part) {
+		if p == nil {
+			return
+		}
+		if len(p.Children) == 0 {
+			out = append(out, p.Size)
+			return
+		}
+		for _, c := range p.Children {
+			walk(c)
+		}
+	}
+	walk(tv.Root)
+	return out
+}
+
+func hasVolume(tv *TreeView, want float64) bool {
+	for _, v := range volumes(tv) {
+		if math.Abs(v-want) < 0.5 {
+			return true
+		}
+	}
+	return false
+}

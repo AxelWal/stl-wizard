@@ -47,3 +47,16 @@ button { width: 100%; padding: 6px; margin-bottom: 8px; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 #sidebar select { width: 100%; padding: 4px; }
 #sidebar label input[type="checkbox"] { width: auto; margin-right: 6px; }
+
+/* The cut plan list. A row is clickable to select the entry, so the name is
+   contenteditable rather than an input: an input swallows the click. */
+#plan { list-style: none; margin: 0; padding: 0; }
+#plan .row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; cursor: pointer; }
+#plan .row.selected { background: #4a9eda; color: #fff; }
+#plan .row.split { opacity: 0.5; }
+#plan .plan-name { flex: 1; outline: none; }
+#plan .plan-name:focus { background: #333; }
+#plan .plan-target { font-size: 11px; color: #999; }
+#plan .row.selected .plan-target { color: #dff; }
+#plan .plan-delete { width: auto; margin: 0; padding: 0 5px; background: none; border: none; color: inherit; }
+#plan input[type="checkbox"] { width: auto; margin: 0; }

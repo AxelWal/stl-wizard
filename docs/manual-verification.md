@@ -45,6 +45,22 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       academic, a dead camera after a drag interrupted mid-gesture was a real bug
       fixed twice, via two different code paths.
 
+## The cut plan
+
+- [x] **[auto]** Add plane cuts nothing; the list gains a numbered entry; Cut now cuts.
+- [x] **[auto]** Entries are listed in the order they will run.
+- [x] **[auto]** Renaming sticks, including across executing the plan.
+- [x] **[auto]** Deleting an entry removes it from the plan and from the result.
+- [x] **[auto]** Unticking an entry leaves it out without losing it.
+- [x] **[auto]** Clicking an entry brings its plane back under the gizmo; moving it and
+      pressing Save plane changes what Cut now produces.
+- [x] **[auto]** Plan fit to printer proposes and cuts nothing until Cut now.
+- [x] **[auto]** Separating bodies is recorded as an entry and survives Cut now.
+- [x] **[auto]** Clearing the plan, and loading a model, both empty the list.
+- [ ] Run a fifty-entry plan on a large model and watch the progress bar. *(Cut now
+      re-cuts from scratch, so this is minutes; no fixture is large enough to make the
+      wait realistic.)*
+
 ## The bounded cut — the feature this application exists for
 
 - [x] **[auto]** On `u.stl`, place the plane across the arms and shrink the

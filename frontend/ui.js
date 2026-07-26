@@ -1,12 +1,15 @@
 import * as THREE from "three";
 import { initViewer, showParts, frameAll, cameraRef, controlsRef, domElement } from "./viewer.js";
 import {
-  OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit, SeparateBodies,
+  OpenModel, OpenPath, Select, Undo, ExportAll, SeparateBodies,
   ExportPlates, ExportPlatesTo,
+  AddPlane, UpdatePlane, RenamePlane, DeletePlane, SetPlaneEnabled, ClearPlan,
+  PlanFitToPrinter, ExecutePlan, Plan,
 } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
+import { renderPlan } from "./plan.js";
 import { initPins, pinSpec, bedSpec, showPanels, reportPins, repairOnLoad } from "./pins.js";
 
 const statusEl = document.getElementById("status");
@@ -26,10 +29,18 @@ const messagesEl = document.getElementById("messages");
 const progressEl = document.getElementById("progress");
 const progressBar = document.getElementById("progress-bar");
 const cutBtn = document.getElementById("do-cut");
+const planPanel = document.getElementById("plan-panel");
+const planEl = document.getElementById("plan");
+const savePlaneBtn = document.getElementById("save-plane");
+const executeBtn = document.getElementById("do-execute");
 const undoBtn = document.getElementById("do-undo");
 const exportBtn = document.getElementById("do-export");
 
 let currentTree = null;
+let currentPlan = { cuts: [] };
+// Which planned cut is selected. Only its plane is drawn: fifty rectangles at once
+// would hide the model.
+let selectedPlan = null;
 
 document.getElementById("mode-translate").addEventListener("click", () => setMode("translate"));
 document.getElementById("mode-rotate").addEventListener("click", () => setMode("rotate"));
@@ -96,6 +107,7 @@ async function render(tree) {
     treePanel.hidden = true;
     planeControls.hidden = true;
     actionsEl.hidden = true;
+    planPanel.hidden = true;
     return;
   }
   const parts = leavesOf(tree.root);
@@ -194,6 +206,8 @@ async function load(loader) {
   // A previous cut's warnings do not describe the model now being opened.
   clearMessages();
   await render(tree);
+  selectedPlan = null;
+  showPlan(await Plan());
   reportRepair(tree);
   // OpenModel returns the current view unchanged when the dialog is cancelled,
   // so re-framing here would throw away a plane the user had just placed.
@@ -231,32 +245,149 @@ window.app = {
   planeInput,
   three: THREE,
   exportPlates,
+  plan: () => currentPlan,
+  selectPlanned,
   mode,
   camera: cameraRef,
   controls: controlsRef,
   canvas: domElement,
 };
 
+// showPlan draws the list and keeps the panel and the Save plane button in step with
+// whether an entry is selected.
+function showPlan(plan) {
+  // Defensive about cuts as well as plan: Go marshals a nil slice as null, and reading
+  // .some() off null killed the module on load once already.
+  currentPlan = { cuts: (plan && plan.cuts) || [] };
+  if (selectedPlan && !currentPlan.cuts.some((c) => c.id === selectedPlan)) {
+    selectedPlan = null; // it was deleted
+  }
+  planPanel.hidden = !currentTree;
+  savePlaneBtn.hidden = selectedPlan === null;
+  executeBtn.disabled = !currentPlan.cuts.some((c) => c.enabled);
+
+  renderPlan(planEl, currentPlan, selectedPlan, {
+    rename: (id, name) => planCommand(() => RenamePlane(id, name)),
+    remove: (id) => planCommand(() => DeletePlane(id)),
+    toggle: (id, on) => planCommand(() => SetPlaneEnabled(id, on)),
+    select: (id) => selectPlanned(id),
+  });
+}
+
+// planCommand runs one plan edit and redraws. Plan edits are cheap and touch no
+// geometry, so they do not take the progress bar or disable the buttons.
+async function planCommand(fn) {
+  try {
+    showPlan(await fn());
+  } catch (err) {
+    message(String(err), "err");
+  }
+}
+
+// selectPlanned loads an entry's plane into the gizmo so it can be seen and moved.
+// Only the selected entry is drawn; a fifty-entry plan drawn at once hides the model.
+function selectPlanned(id) {
+  const cut = currentPlan.cuts.find((c) => c.id === id);
+  if (!cut) return;
+  selectedPlan = id;
+  loadPlaneIntoGizmo(cut.plane);
+  showPlan(currentPlan);
+}
+
+// loadPlaneIntoGizmo is the reverse of planeInput(): it puts a stored plane back under
+// the gizmo, so a planned cut can be re-positioned rather than deleted and redone.
+function loadPlaneIntoGizmo(plane) {
+  const g = gizmoGroup();
+  const u = new THREE.Vector3(...plane.u);
+  const v = new THREE.Vector3(...plane.v);
+  const n = new THREE.Vector3(...plane.normal);
+  if (u.lengthSq() > 0 && v.lengthSq() > 0 && n.lengthSq() > 0) {
+    // The basis is orthonormal by construction, so it is a rotation matrix directly.
+    const m = new THREE.Matrix4().makeBasis(u.normalize(), v.normalize(), n.normalize());
+    g.quaternion.setFromRotationMatrix(m);
+  }
+  g.position.set(...plane.origin);
+  g.updateMatrixWorld();
+  setExtent(plane.width, plane.height);
+  showGizmo();
+  // showGizmo re-frames the plane over the model, which would throw away the position
+  // just restored, so put it back afterwards.
+  g.position.set(...plane.origin);
+  g.updateMatrixWorld();
+  setExtent(plane.width, plane.height);
+}
+
 cutBtn.addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
+  try {
+    const plan = await AddPlane(planeInput(), pinSpec());
+    showPlan(plan);
+    const added = plan.cuts[plan.cuts.length - 1];
+    message(`Added ${added.name}. Nothing is cut until you press Cut now.`, "ok");
+  } catch (err) {
+    message(String(err), "err");
+  }
+});
+
+savePlaneBtn.addEventListener("click", async () => {
+  if (!selectedPlan) return;
+  clearMessages();
+  try {
+    const plan = await UpdatePlane(selectedPlan, planeInput(), pinSpec());
+    const saved = plan.cuts.find((c) => c.id === selectedPlan);
+    showPlan(plan);
+    message(`Moved ${saved ? saved.name : "the cut"}. Press Cut now to apply the plan.`, "ok");
+  } catch (err) {
+    message(String(err), "err");
+  }
+});
+
+document.getElementById("clear-plan").addEventListener("click", () => {
+  clearMessages();
+  selectedPlan = null;
+  planCommand(ClearPlan);
+});
+
+executeBtn.addEventListener("click", async () => {
+  if (!currentTree) return;
+  clearMessages();
   busy(true);
-  const spec = pinSpec();
   progress(true);
   try {
-    const outcome = await Cut(currentTree.selectedId, planeInput(), spec);
-    await render(outcome.tree);
+    const out = await ExecutePlan();
+    await render(out.tree);
+    showPlan(out.plan);
 
-    // Warnings are shown whether or not the cut succeeded. A part that is not a
-    // closed solid is still produced and still exported — the user has to be
-    // told, not protected from the result.
-    for (const w of outcome.warnings || []) message(w, "warn");
-    if (!outcome.watertight) {
-      message("At least one piece is not a closed solid. Nudge the plane slightly and cut again, or check the flagged part before printing.", "warn");
-    } else if (!(outcome.warnings || []).length) {
-      message("Cut complete. Both pieces are closed solids.", "ok");
+    message(`Made ${out.cutsMade} cut(s) from the plan.`, "ok");
+
+    // An entry that could not run has to be named. A plan that quietly does less than
+    // it lists is the one outcome this application is not allowed to produce.
+    for (const s of out.skipped || []) message(`Skipped ${s}`, "warn");
+    for (const w of out.warnings || []) message(w, "warn");
+
+    // Pins are per entry, so each is reported against the entry that asked for them,
+    // with that entry's own spec — peg and dowel word themselves differently, and one
+    // summed number would describe neither.
+    for (const r of out.made || []) {
+      if (r.pins && r.pins.enabled) {
+        reportPins(
+          { pinsPlaced: r.pinsPlaced, pinsRequested: r.pinsRequested, pinsSkipped: r.pinsSkipped },
+          (text, kind) => message(`${r.name}: ${text}`, kind),
+          r.pins
+        );
+      }
     }
-    reportPins(outcome, message, spec);
+
+    if (out.watertight) {
+      message("All pieces are closed solids.", "ok");
+    } else {
+      message(
+        "At least one piece is not a closed solid. Nudge the plane of the cut that " +
+          "produced it and run the plan again, or check the flagged part before printing.",
+        "warn"
+      );
+    }
   } catch (err) {
     message(String(err), "err");
   } finally {
@@ -309,6 +440,10 @@ document.getElementById("do-separate").addEventListener("click", async () => {
   try {
     const out = await SeparateBodies(currentTree.selectedId);
     await render(out.tree);
+    // Separation is recorded as a plan entry, so the list has to be refreshed or it
+    // would not show the step that just happened — and Cut now would look like it was
+    // about to throw the separation away.
+    showPlan(await Plan());
 
     if (out.bodies < 2) {
       message("This part is a single body — nothing to separate.", "ok");
@@ -362,18 +497,14 @@ document.getElementById("do-autosplit").addEventListener("click", async () => {
   busy(true);
   progress(true);
   try {
-    const out = await AutoSplit(bedSpec(), pinSpec());
-    currentTree = out.tree;
-    await render(currentTree);
-
-    if (out.cutsMade === 0) {
-      message("Every piece already fits the bed. Nothing to do.", "ok");
+    const before = currentPlan.cuts.length;
+    const plan = await PlanFitToPrinter(bedSpec());
+    showPlan(plan);
+    const added = plan.cuts.length - before;
+    if (added === 0) {
+      message("The model already fits the bed. Nothing to plan.", "ok");
     } else {
-      message(`Split into ${out.cutsMade + 1} pieces.`, "ok");
-    }
-    for (const w of out.warnings || []) message(w, "warn");
-    for (const name of out.stillTooBig || []) {
-      message(`${name} still does not fit the bed.`, "warn");
+      message(`Planned ${added} cut(s). Nothing is cut until you press Cut now.`, "ok");
     }
   } catch (err) {
     message(String(err), "err");
