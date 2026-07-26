@@ -3,6 +3,7 @@ package threemf
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"io"
 	"math"
@@ -18,7 +19,7 @@ import (
 func writePlates(t *testing.T, plates []Plate) *zip.Reader {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Write(&buf, plates); err != nil {
+	if err := Write(&buf, plates, testProject()); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	r, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
@@ -26,6 +27,12 @@ func writePlates(t *testing.T, plates []Plate) *zip.Reader {
 		t.Fatalf("the output is not a readable zip: %v", err)
 	}
 	return r
+}
+
+// testProject is a valid project for the tests that are about geometry rather than
+// settings: a real bed, because Write refuses one that is not positive, and one filament.
+func testProject() Project {
+	return Project{Bed: [3]float64{220, 220, 250}, Nozzle: 0.4, Filaments: oneFilament()}
 }
 
 func entry(t *testing.T, r *zip.Reader, name string) []byte {
@@ -78,16 +85,30 @@ func TestWriteProducesTheEntriesASlicerNeeds(t *testing.T) {
 	}
 }
 
-func TestEveryEntryIsWellFormedXML(t *testing.T) {
+// Every entry must parse as whatever it claims to be. project_settings.config is JSON —
+// that is how the slicer writes it too, a settings blob rather than a document — and
+// everything else is XML.
+func TestEveryEntryIsWellFormed(t *testing.T) {
 	r := writePlates(t, []Plate{
 		{Name: "a", Mesh: fixtures.Cube(10), Transform: identity()},
 		{Name: "b", Mesh: fixtures.UShape(10), Transform: identity()},
 	})
+	seenJSON := false
 	for _, f := range r.File {
 		var v any
+		if strings.HasSuffix(f.Name, "project_settings.config") {
+			seenJSON = true
+			if err := json.Unmarshal(entry(t, r, f.Name), &v); err != nil {
+				t.Errorf("%s is not well-formed JSON: %v", f.Name, err)
+			}
+			continue
+		}
 		if err := xml.Unmarshal(entry(t, r, f.Name), &v); err != nil {
 			t.Errorf("%s is not well-formed XML: %v", f.Name, err)
 		}
+	}
+	if !seenJSON {
+		t.Error("no project_settings.config in the archive; without it the slicer applies its own bed")
 	}
 }
 
@@ -237,14 +258,14 @@ func TestTheBuildTransformPutsEachPartOnItsPlate(t *testing.T) {
 
 func TestWriteRefusesNoPlates(t *testing.T) {
 	var buf bytes.Buffer
-	if err := Write(&buf, nil); err == nil {
+	if err := Write(&buf, nil, testProject()); err == nil {
 		t.Error("writing a project with no plates should be refused, not produce an empty file")
 	}
 }
 
 func TestWriteRefusesAPlateWithNoMesh(t *testing.T) {
 	var buf bytes.Buffer
-	err := Write(&buf, []Plate{{Name: "empty", Mesh: &stl.Mesh{}, Transform: identity()}})
+	err := Write(&buf, []Plate{{Name: "empty", Mesh: &stl.Mesh{}, Transform: identity()}}, testProject())
 	if err == nil {
 		t.Error("a plate with no geometry should be refused")
 	}
@@ -358,3 +379,136 @@ type modelXML struct {
 		} `xml:"item"`
 	} `xml:"build"`
 }
+
+// A project with no Metadata/project_settings.config gets Bambu's own defaults applied to
+// it — a 200x200 bed 100 tall, measured from a reference export. A part laid out for the
+// 256mm bed the user picked then opens sitting off the plate, which is the whole reason
+// this file is written.
+func TestWriteRecordsTheBedTheCallerAskedFor(t *testing.T) {
+	// A rectangular bed, not a square one: with X equal to Y a swapped pair reads exactly
+	// the same and the test proves nothing. Bambu's own H2D is 350x320, so this is a real
+	// shape rather than a contrivance.
+	r := writeProject(t, []Plate{cubePlate("a")}, Project{
+		Bed:       [3]float64{350, 320, 325},
+		Nozzle:    0.4,
+		Filaments: []Filament{{Colour: "#00AE42", Type: "PLA"}},
+	})
+
+	var cfg map[string]any
+	if err := json.Unmarshal(entry(t, r, "Metadata/project_settings.config"), &cfg); err != nil {
+		t.Fatalf("project_settings.config is not JSON: %v", err)
+	}
+
+	area, _ := json.Marshal(cfg["printable_area"])
+	want := `["0x0","350x0","350x320","0x320"]`
+	if string(area) != want {
+		t.Errorf("printable_area = %s, want %s", area, want)
+	}
+	if got := cfg["printable_height"]; got != "325" {
+		t.Errorf("printable_height = %v, want \"325\"", got)
+	}
+}
+
+// The two index bases differ, and this is the trap the spec names. extruder in
+// model_settings.config counts from 1; the filament arrays in project_settings.config
+// count from 0. Three filaments, so an off-by-one cannot pass by symmetry — with two, a
+// swap looks identical.
+func TestFilamentIndexIsOneBasedAgainstAZeroBasedTable(t *testing.T) {
+	table := []Filament{
+		{Colour: "#FF0000", Type: "PLA"},
+		{Colour: "#00FF00", Type: "PETG"},
+		{Colour: "#0000FF", Type: "ABS"},
+	}
+	r := writeProject(t, []Plate{
+		{Name: "third", Mesh: fixtures.Cube(10), Transform: identity(), Filament: 3},
+	}, Project{Bed: [3]float64{200, 200, 200}, Nozzle: 0.4, Filaments: table})
+
+	settings := string(entry(t, r, "Metadata/model_settings.config"))
+	if !strings.Contains(settings, `<metadata key="extruder" value="3"/>`) {
+		t.Errorf("model_settings.config does not put the part on extruder 3:\n%s", settings)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(entry(t, r, "Metadata/project_settings.config"), &cfg); err != nil {
+		t.Fatalf("project_settings.config is not JSON: %v", err)
+	}
+	colours, _ := json.Marshal(cfg["filament_colour"])
+	if string(colours) != `["#FF0000","#00FF00","#0000FF"]` {
+		t.Errorf("filament_colour = %s, want all three in table order", colours)
+	}
+	types, _ := json.Marshal(cfg["filament_type"])
+	if string(types) != `["PLA","PETG","ABS"]` {
+		t.Errorf("filament_type = %s, want all three in table order", types)
+	}
+	// The correspondence itself: extruder 3 means the third entry, index 2.
+	list, ok := cfg["filament_colour"].([]any)
+	if !ok || len(list) != 3 {
+		t.Fatalf("filament_colour is not a list of three: %v", cfg["filament_colour"])
+	}
+	if list[3-1] != "#0000FF" {
+		t.Errorf("filament_colour[extruder-1] = %v, want #0000FF", list[3-1])
+	}
+}
+
+// A part cannot be sent to a filament the project does not have. Caught at the API, where
+// the caller can be told, rather than in a file the slicer rejects later.
+func TestWriteRejectsAFilamentTheTableDoesNotHave(t *testing.T) {
+	var buf bytes.Buffer
+	err := Write(&buf, []Plate{
+		{Name: "x", Mesh: fixtures.Cube(10), Transform: identity(), Filament: 4},
+	}, Project{Bed: [3]float64{200, 200, 200}, Filaments: []Filament{{Colour: "#fff", Type: "PLA"}}})
+	if err == nil {
+		t.Fatal("a plate on filament 4 of a one-filament project was accepted")
+	}
+	if !strings.Contains(err.Error(), "filament") {
+		t.Errorf("the error does not mention the filament: %v", err)
+	}
+}
+
+// A bed of zero is the defaults-get-applied bug in another shape, so it is refused rather
+// than written as a project with no bed.
+func TestWriteRejectsABedThatIsNotPositive(t *testing.T) {
+	for _, bed := range [][3]float64{{0, 0, 0}, {200, 0, 200}, {200, 200, -1}} {
+		var buf bytes.Buffer
+		if err := Write(&buf, []Plate{cubePlate("a")}, Project{Bed: bed, Filaments: oneFilament()}); err == nil {
+			t.Errorf("bed %v was accepted", bed)
+		}
+	}
+}
+
+func TestPartNamesWithMarkupSurviveIntoAParsableFile(t *testing.T) {
+	name := `A & B "quoted" <tag>`
+	r := writeProject(t, []Plate{
+		{Name: name, Mesh: fixtures.Cube(10), Transform: identity()},
+	}, Project{Bed: [3]float64{200, 200, 200}, Filaments: oneFilament()})
+
+	for _, f := range []string{"3D/3dmodel.model", "Metadata/model_settings.config"} {
+		var doc any
+		if err := xml.Unmarshal(entry(t, r, f), &doc); err != nil {
+			t.Errorf("%s does not parse with a marked-up name in it: %v", f, err)
+		}
+	}
+	settings := string(entry(t, r, "Metadata/model_settings.config"))
+	if !strings.Contains(settings, "&amp;") {
+		t.Errorf("the ampersand was not entity-encoded:\n%s", settings)
+	}
+}
+
+func writeProject(t *testing.T, plates []Plate, p Project) *zip.Reader {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := Write(&buf, plates, p); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	r, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("the output is not a readable zip: %v", err)
+	}
+	return r
+}
+
+func cubePlate(name string) Plate {
+	return Plate{Name: name, Mesh: fixtures.Cube(10), Transform: identity()}
+}
+
+func oneFilament() []Filament { return []Filament{{Colour: "#00AE42", Type: "PLA"}} }

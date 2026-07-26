@@ -828,7 +828,16 @@ func (a *App) exportPlatesTo(path string, bed cut.Bed) (*PlateOutcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := threemf.Write(f, plates); err != nil {
+	// The bed goes into the file, so the slicer lays the project out on the printer the
+	// user chose rather than substituting its own default.
+	//
+	// One filament for now: the export layer takes a table and a per-part assignment, so
+	// multi-colour is a matter of filling those in from the UI.
+	proj := threemf.Project{
+		Bed:       [3]float64{bed.X, bed.Y, bed.Z},
+		Filaments: []threemf.Filament{{Type: "PLA"}},
+	}
+	if err := threemf.Write(f, plates, proj); err != nil {
 		f.Close()
 		return nil, err
 	}

@@ -330,10 +330,23 @@ installed Bambu Studio flatpak. **Pass `--arrange 0`** as that script does: Bamb
 CLI re-arranges on import by default and repacks everything onto plate 1, which is
 indistinguishable from our file being wrong. The GUI does not.
 
-Bambu's default bed here is 200x200x100, not the app's 220x220x250 default, so a part
-placed by our stride can land off Bambu's bed. The plate assignment in
-`model_settings.config` is what actually decides the plate, and that was verified to
-survive; the stride only affects where things are drawn.
+**The multi-plate round trip currently fails, and the claim that used to stand here was
+wrong.** `scripts/verify-3mf.sh` reports "4 plate(s) but 1 object assignment(s)". Measured
+on Bambu Studio 2.7.1.62: all four objects and all four `<plate>` elements survive the
+round trip, the objects come back at the coordinates we wrote (X = 175, 565, 955, 1345,
+our own stride of bed + 40 preserved), but **only plate 1 has a `model_instance`** — 2, 3
+and 4 come back empty. So the plate assignment in `model_settings.config` is *not* what
+decides the plate, or not on its own, and the previous note here ("that was verified to
+survive; the stride only affects where things are drawn") does not hold.
+
+This is not caused by writing `project_settings.config`: a file without it fails
+identically, so the defect predates that work. It has not been diagnosed. Do not trust the
+plate layout until it is, and run `scripts/verify-3mf.sh` before believing any change to
+it.
+
+Bambu's default bed with no `project_settings.config` is 200x200x100 — measured from a
+reference export — so a part placed by our stride could land off it. That much is now
+fixed: the export declares the bed the user chose.
 
 ## Read before trusting results
 
