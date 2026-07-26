@@ -29,6 +29,22 @@
           <div id="part-info"></div>
           <button id="do-separate">Separate bodies</button>
         </div>
+        <div id="scale-panel" hidden>
+          <h2>Scale</h2>
+          <label>Units
+            <select id="scale-mode">
+              <option value="percent" selected>Percent of the file</option>
+              <option value="mm">Millimetres</option>
+            </select>
+          </label>
+          <label><input id="scale-uniform" type="checkbox" checked /> Keep proportions</label>
+          <label>X <input id="scale-x" type="number" min="0.01" step="1" value="100" /></label>
+          <label>Y <input id="scale-y" type="number" min="0.01" step="1" value="100" /></label>
+          <label>Z <input id="scale-z" type="number" min="0.01" step="1" value="100" /></label>
+          <p id="scale-preview"></p>
+          <button id="do-scale">Apply scale</button>
+          <button id="reset-scale">Reset to 100%</button>
+        </div>
         <div id="plane-controls" hidden>
           <h2>Cutting plane</h2>
           <button id="mode-translate">Move</button>

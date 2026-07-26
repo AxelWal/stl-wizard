@@ -228,7 +228,16 @@ function makeApp(page) {
         ({ f, repair }) => (repair === undefined ? window.app.openPath(f) : window.app.openPath(f, repair)),
         { f: file, repair }
       );
-      await page.waitForFunction(() => !document.getElementById("tree-panel").hidden);
+      // Wait for the scale panel too, not just the tree. render() un-hides the tree
+      // before it syncs the scale fields, so returning on the tree alone lets a test set
+      // those fields and have syncScale overwrite them a moment later — which failed
+      // about one full run in three while passing every time in isolation.
+      await page.waitForFunction(
+        () =>
+          !document.getElementById("tree-panel").hidden &&
+          !document.getElementById("scale-panel").hidden &&
+          document.getElementById("scale-preview").textContent.length > 0
+      );
     },
 
     async setRepairOnLoad(on) {
@@ -330,6 +339,39 @@ function makeApp(page) {
         };
       }, name);
     },
+
+    // scale drives the Scale panel. percent or mm sets the X field and lets the
+    // keep-proportions lock fill the rest; x/y/z with uniform false sets each.
+    async scale(opts) {
+      await page.evaluate((o) => {
+        const mode = document.getElementById("scale-mode");
+        mode.value = o.mm !== undefined ? "mm" : "percent";
+        mode.dispatchEvent(new Event("change"));
+
+        const uniform = document.getElementById("scale-uniform");
+        uniform.checked = o.uniform !== false;
+        uniform.dispatchEvent(new Event("change"));
+
+        const set = (id, v) => {
+          const el = document.getElementById(id);
+          el.value = String(v);
+          el.dispatchEvent(new Event("input"));
+        };
+        if (o.percent !== undefined) set("scale-x", o.percent);
+        else if (o.mm !== undefined) set("scale-mm" in o ? "scale-x" : "scale-x", o.mm);
+        else {
+          set("scale-x", o.x);
+          set("scale-y", o.y);
+          set("scale-z", o.z);
+        }
+      }, opts);
+      return api.act("do-scale");
+    },
+
+    scaleFields: () =>
+      page.evaluate(() => ["scale-x", "scale-y", "scale-z"].map((id) => document.getElementById(id).value)),
+
+    scalePreview: () => api.text("#scale-preview"),
 
     async setBed({ x, y, z }) {
       await page.evaluate(

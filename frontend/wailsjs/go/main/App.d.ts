@@ -33,6 +33,8 @@ export function RenamePlane(arg1:string,arg2:string):Promise<main.PlanView>;
 
 export function ReorderPlan(arg1:Array<string>):Promise<main.PlanView>;
 
+export function ScaleModel(arg1:any):Promise<main.TreeView>;
+
 export function Select(arg1:string):Promise<main.TreeView>;
 
 export function SeparateBodies(arg1:string):Promise<main.SeparateOutcome>;

@@ -73,6 +73,27 @@ func (m *Mesh) Volume() float64 {
 	return v / 6
 }
 
+// Scaled returns a copy of m with every vertex multiplied componentwise by f.
+//
+// A copy, not in place: the session keeps the mesh exactly as it was loaded and scales
+// from that every time, so applying the same factors twice is idempotent and returning
+// to 1 is exact rather than a division that never quite arrives.
+//
+// Positive factors preserve winding, so a closed solid stays closed and its volume comes
+// out multiplied by f[0]*f[1]*f[2]. Negative factors would mirror it — consistently wound
+// and enclosing a negative volume, which reads as sound and prints as nothing — so
+// callers reject them rather than this silently obliging.
+func (m *Mesh) Scaled(f [3]float64) *Mesh {
+	out := &Mesh{Tris: make([]Tri, len(m.Tris))}
+	scale := func(v geom.Vec3) geom.Vec3 {
+		return geom.Vec3{v[0] * f[0], v[1] * f[1], v[2] * f[2]}
+	}
+	for i, t := range m.Tris {
+		out.Tris[i] = Tri{A: scale(t.A), B: scale(t.B), C: scale(t.C)}
+	}
+	return out
+}
+
 // Epsilon is the single tolerance every geometric predicate uses, scaled to the
 // model so that a 1mm part and a 1m part behave the same way.
 func (m *Mesh) Epsilon() float64 {

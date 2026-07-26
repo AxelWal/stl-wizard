@@ -149,6 +149,8 @@ export namespace main {
 	    selectedId: string;
 	    canUndo: boolean;
 	    repair?: RepairView;
+	    scale: number[];
+	    originalSize: number[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TreeView(source);
@@ -161,6 +163,8 @@ export namespace main {
 	        this.selectedId = source["selectedId"];
 	        this.canUndo = source["canUndo"];
 	        this.repair = this.convertValues(source["repair"], RepairView);
+	        this.scale = source["scale"];
+	        this.originalSize = source["originalSize"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

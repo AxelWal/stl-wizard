@@ -63,6 +63,11 @@ type TreeView struct {
 	// to do. Cuts and undos leave it nil, so the message appears once, on the load
 	// that caused it.
 	Repair *RepairView `json:"repair,omitempty"`
+	// Scale is the factors in force relative to the file as loaded, and OriginalSize
+	// is the file's own size. The sidebar needs both: one to say what the current
+	// scaling is, the other to work out the factor a target size in millimetres needs.
+	Scale        [3]float64 `json:"scale"`
+	OriginalSize [3]float64 `json:"originalSize"`
 }
 
 // RepairView is what load-time repair did, for the sidebar to report.
@@ -110,7 +115,7 @@ func (a *App) view() *TreeView {
 		v = viewOf(tr)
 		return nil
 	})
-	return v
+	return a.withScale(v)
 }
 
 // viewOf snapshots a tree the caller already holds the lock on. Calling view() from
@@ -123,6 +128,15 @@ func viewOf(tr *Tree) *TreeView {
 		SelectedID: tr.SelectedID,
 		CanUndo:    tr.CanUndo(),
 	}
+}
+
+// withScale fills in the scaling fields, which live on the session rather than the tree.
+func (a *App) withScale(v *TreeView) *TreeView {
+	if v != nil {
+		v.Scale = a.session.Scale()
+		v.OriginalSize = a.session.OriginalSize()
+	}
+	return v
 }
 
 // clonePart deep-copies a part subtree, so what the frontend receives shares no
@@ -755,6 +769,34 @@ func rotatedBounds(m *stl.Mesh, r [9]float64) (lo, hi geom.Vec3) {
 		}
 	}
 	return lo, hi
+}
+
+// ScaleModel scales the loaded model.
+//
+// Factors are relative to the file as loaded, so applying the same ones twice is
+// idempotent and 1,1,1 returns exactly to the original. The percentage and millimetre
+// arithmetic is the frontend's: it has the mode, the fields, and both Scale and
+// OriginalSize to work from.
+//
+// The tree is reset and the plan cleared, because both describe the model at its previous
+// size.
+func (a *App) ScaleModel(factors [3]float64) (*TreeView, error) {
+	for i, f := range factors {
+		axis := string(rune('X' + i))
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, fmt.Errorf("the %s scale must be a finite number, got %v", axis, f)
+		}
+		// Zero flattens the model; a negative factor mirrors it, which leaves a mesh
+		// that is consistently wound and encloses a negative volume — it reads as sound
+		// and prints as nothing. Neither is obliged.
+		if f <= 0 {
+			return nil, fmt.Errorf("the %s scale must be greater than zero, got %v", axis, f)
+		}
+	}
+	if err := a.session.Rescale(factors); err != nil {
+		return nil, err
+	}
+	return a.view(), nil
 }
 
 // PlaneInput is the gizmo's state as the frontend reports it. Arrays rather than

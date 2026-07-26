@@ -45,6 +45,20 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       academic, a dead camera after a drag interrupted mid-gesture was a real bug
       fixed twice, via two different code paths.
 
+## Scale
+
+- [x] **[auto]** A percentage scales the model and the reported size and volume follow.
+- [x] **[auto]** Applying the same percentage twice changes nothing the second time.
+- [x] **[auto]** Keep proportions makes one field drive all three.
+- [x] **[auto]** Unticked, each axis scales on its own and the model stays closed.
+- [x] **[auto]** Millimetre mode reaches the size asked for, even after an earlier scale.
+- [x] **[auto]** Reset returns to exactly the file's own size and volume.
+- [x] **[auto]** A zero or negative factor is refused with a readable message and changes
+      nothing.
+- [x] **[auto]** Scaling clears the cut plan and says so.
+- [x] **[auto]** A scaled model cuts into pieces that sum to the scaled whole.
+- [ ] Scale something to a measured size, print it, and check it with calipers.
+
 ## The cut plan
 
 - [x] **[auto]** Add plane cuts nothing; the list gains a numbered entry; Cut now cuts.

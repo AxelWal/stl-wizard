@@ -62,6 +62,10 @@ export function ReorderPlan(arg1) {
   return window['go']['main']['App']['ReorderPlan'](arg1);
 }
 
+export function ScaleModel(arg1) {
+  return window['go']['main']['App']['ScaleModel'](arg1);
+}
+
 export function Select(arg1) {
   return window['go']['main']['App']['Select'](arg1);
 }

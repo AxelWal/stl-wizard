@@ -19,6 +19,7 @@ plan, and **Cut now** applies it.
   without every piece coming back flagged.
 - Separating a file's disconnected bodies into their own parts, so several solids
   in one STL can be cut, measured and exported individually.
+- Scaling, by percentage or to a target size in millimetres, uniformly or per axis.
 - Export to a multi-plate 3MF: every part on its own build plate, each turned to
   need as little support as it can.
 
@@ -187,6 +188,28 @@ large file:
     go run ./cmd/meshrepair -in model.stl                 # just the verdict
     go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
+## Scale
+
+The Scale panel takes a percentage of the file or a target size in millimetres, with
+**Keep proportions** on by default. With it on, whichever field you type in drives all
+three, so a target width of 100mm on a 30 × 40 × 10 model gives 100 × 133.3 × 33.3 rather
+than squashing everything to 100. A line under the fields states the size the model will
+end up, so the numbers in the fields never have to be interpreted.
+
+**Factors are absolute, relative to the file as loaded.** The mesh as it arrived is kept
+untouched and scaled fresh each time, so typing 200% twice gives 200% rather than 400%,
+and **Reset to 100%** returns to exactly the original volume rather than a division that
+never quite arrives.
+
+A factor of zero or below is refused. Zero flattens the model; a negative one mirrors it,
+which leaves a mesh that is consistently wound and encloses a *negative* volume — it reads
+as perfectly sound and prints as nothing.
+
+**Scaling clears the cut plan**, and says so. Its planes name coordinates that no longer
+describe the model, and for a non-uniform scale a bounded rectangle does not even stay a
+rectangle unless it happens to align with the scale axes, since a plane's normal
+transforms by the inverse transpose rather than by the factors.
+
 ## The cut plan
 
 **Add plane** and **Plan fit to printer** add entries to a list; neither cuts anything.
@@ -344,7 +367,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-73 tests over every GUI feature, pointer input included. See CLAUDE.md.
+82 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

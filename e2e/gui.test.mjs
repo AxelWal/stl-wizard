@@ -227,6 +227,123 @@ test("repeated failed cuts never leave the progress bar on screen", async (app) 
   expect.equal(await app.hidden("#progress"), true, "the progress bar after a successful cut");
 });
 
+group("scale");
+
+test("scaling by a percentage changes the model", async (app) => {
+  await app.open("u");
+  const [before] = await app.parts();
+  expect.equal(before.size, "30.0 × 40.0 × 10.0 mm", "the file's own size");
+
+  const msg = await app.scale({ percent: 200 });
+  expect.contains(msg, "60.0 × 80.0 × 20.0 mm", "the result is stated");
+
+  const [after] = await app.parts();
+  expect.equal(after.size, "60.0 × 80.0 × 20.0 mm", "the reported size");
+  // Volume goes as the cube of a uniform factor: 9000 x 8.
+  expect.near(after.volume, 72000, 1, "the volume");
+  expect.ok(after.closed, "a scaled model is still a closed solid");
+});
+
+// Absolute, not relative: applying 200% twice must leave it at 200%.
+test("applying the same percentage twice changes nothing the second time", async (app) => {
+  await app.open("u");
+  await app.scale({ percent: 200 });
+  const once = (await app.parts())[0];
+  await app.scale({ percent: 200 });
+  const twice = (await app.parts())[0];
+  expect.equal(twice.size, once.size, "the size after applying it again");
+  expect.near(twice.volume, once.volume, 0.001, "the volume");
+});
+
+test("keeping proportions makes one field drive all three", async (app) => {
+  await app.open("u");
+  await app.page.fill("#scale-x", "250");
+  const fields = await app.scaleFields();
+  expect.equal(fields.join(","), "250,250,250", "the other two follow");
+
+  await app.page.click("#do-scale");
+  await app.page.waitForFunction(() => document.getElementById("messages").textContent.length > 0);
+  const [p] = await app.parts();
+  expect.equal(p.size, "75.0 × 100.0 × 25.0 mm", "every axis scaled by 2.5");
+});
+
+test("unticking proportions scales each axis on its own", async (app) => {
+  await app.open("u");
+  await app.page.uncheck("#scale-uniform");
+  const msg = await app.scale({ x: 200, y: 100, z: 300, uniform: false });
+
+  expect.contains(msg, "60.0 × 40.0 × 30.0 mm", "the stated result");
+  const [p] = await app.parts();
+  expect.equal(p.size, "60.0 × 40.0 × 30.0 mm", "each axis independently");
+  expect.ok(p.closed, "a non-uniform scale must not turn the model inside out");
+});
+
+// Millimetre mode is where the arithmetic could quietly be wrong: the factor is the
+// target divided by the file's own size, not by whatever it is currently showing.
+test("millimetre mode reaches the size asked for", async (app) => {
+  await app.open("u");
+  // Scale first, so a factor computed from the current size rather than the original
+  // would give the wrong answer.
+  await app.scale({ percent: 200 });
+
+  const msg = await app.scale({ mm: 150 }); // 150mm on X, proportions kept
+  expect.contains(msg, "150.0 × 200.0 × 50.0 mm", "the stated result");
+  const [p] = await app.parts();
+  expect.equal(p.size, "150.0 × 200.0 × 50.0 mm", "X reaches exactly 150");
+});
+
+test("reset returns to the file's own size", async (app) => {
+  await app.open("u");
+  const [before] = await app.parts();
+  await app.scale({ x: 370, y: 12, z: 800, uniform: false });
+  expect.ok((await app.parts())[0].size !== before.size, "it changed");
+
+  await app.page.click("#reset-scale");
+  await app.page.waitForFunction(
+    (want) => document.getElementById("messages").textContent.includes(want),
+    "30.0 × 40.0 × 10.0",
+    { timeout: 10000 }
+  );
+  const [after] = await app.parts();
+  expect.equal(after.size, before.size, "exactly the original size");
+  expect.near(after.volume, before.volume, 0.0001, "exactly the original volume");
+});
+
+// A negative factor mirrors the model: consistently wound, negative volume, reads as
+// sound and prints as nothing.
+test("a nonsense scale is refused with a readable message", async (app) => {
+  await app.open("u");
+  const [before] = await app.parts();
+
+  const msg = await app.scale({ x: -100, y: 100, z: 100, uniform: false });
+  expect.contains(msg, "greater than zero", "the reason");
+  expect.absent(msg, "panic", "no stack trace");
+  expect.equal((await app.parts())[0].size, before.size, "the model is untouched");
+});
+
+test("scaling clears the cut plan and says so", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.addPlane();
+  expect.equal((await app.plan()).cuts.length, 1, "one planned");
+
+  const msg = await app.scale({ percent: 150 });
+  expect.contains(msg, "cut plan was cleared", "the user is told");
+  expect.equal((await app.plan()).cuts.length, 0, "the plan is gone");
+});
+
+test("a scaled model cuts into pieces that add up", async (app) => {
+  await app.open("u");
+  await app.scale({ percent: 200 });
+  await app.planeAcrossTheArms({ position: [30, 50, 10], width: 400, height: 400 });
+  const msg = await app.cut();
+
+  expect.contains(msg, "All pieces are closed solids", "the cut succeeds on scaled geometry");
+  const parts = await app.parts();
+  const sum = parts.reduce((a, p) => a + p.volume, 0);
+  expect.near(sum, 72000, 2, "the pieces sum to the scaled whole");
+});
+
 group("the cut plan");
 
 // The whole point of the feature: pressing the button proposes, it does not cut.

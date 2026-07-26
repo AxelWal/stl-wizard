@@ -133,6 +133,7 @@ that produced the figures above.
     #progress          long-cut bar       #progress-bar    its fill
 
     #plan #do-execute #clear-plan #save-plane   the cut plan
+    #scale-panel #scale-mode #scale-uniform #scale-x/y/z #do-scale #reset-scale
     #repair-on-load                       repair holes as the model loads
     #do-separate                          split a part into its bodies
     #do-plates                            export a multi-plate 3MF
@@ -159,7 +160,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 73
+    node e2e/gui.test.mjs              # all 82
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -219,6 +220,28 @@ nothing about behaviour — that is what the browser run above is for.
   `TransformControls.getHelper()` instead; see `frontend/gizmo.js:179`.
 - `wails dev` reloads the page on every save, so a half-finished multi-file
   edit will throw in the console. Re-check after the last edit lands.
+
+## Scale
+
+`Session` keeps `origin` — the mesh as loaded — plus `scale`, and `working()` is the
+product. Factors are therefore **absolute**: applying the same ones twice is idempotent
+and returning to 1 is exact. Baking each scale into the mesh would make 200% twice give
+400% and make 100% unreachable.
+
+`ScaleModel` refuses a factor at or below zero. A negative one mirrors the model, and a
+mirrored solid is consistently wound with a *negative* volume — `meshcheck` calls it
+sound. `TestScaledStaysAClosedSolid` asserts the volume is positive for exactly that
+reason.
+
+`TreeView.Scale` and `OriginalSize` exist so the frontend can convert a target in
+millimetres into a factor **against the file's own size**, not against whatever is
+currently showing. Dividing by the current size is the plausible-looking bug, and
+`millimetre mode reaches the size asked for` scales first specifically to catch it.
+
+Scaling resets the tree and clears the plan. `render()` un-hides the tree panel before it
+syncs the scale fields, so `app.open()` in the harness waits for `#scale-preview` to be
+populated as well — without that, a test setting those fields had them overwritten a
+moment later, one full run in three.
 
 ## The cut plan
 

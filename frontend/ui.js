@@ -4,12 +4,13 @@ import {
   OpenModel, OpenPath, Select, Undo, ExportAll, SeparateBodies,
   ExportPlates, ExportPlatesTo,
   AddPlane, UpdatePlane, RenamePlane, DeletePlane, SetPlaneEnabled, ClearPlan,
-  PlanFitToPrinter, ExecutePlan, Plan, ReorderPlan,
+  PlanFitToPrinter, ExecutePlan, Plan, ReorderPlan, ScaleModel,
 } from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
 import { renderPlan } from "./plan.js";
+import { initScale, syncScale } from "./scale.js";
 import { initPins, pinSpec, bedSpec, showPanels, reportPins, repairOnLoad } from "./pins.js";
 
 const statusEl = document.getElementById("status");
@@ -17,6 +18,7 @@ const statusEl = document.getElementById("status");
 initViewer(document.getElementById("viewport"));
 initGizmo();
 initPins();
+initScale(applyScale);
 
 const planeControls = document.getElementById("plane-controls");
 const widthEl = document.getElementById("plane-width");
@@ -108,6 +110,7 @@ async function render(tree) {
     planeControls.hidden = true;
     actionsEl.hidden = true;
     planPanel.hidden = true;
+    syncScale(null);
     return;
   }
   const parts = leavesOf(tree.root);
@@ -127,6 +130,7 @@ async function render(tree) {
   showPanels();
   actionsEl.hidden = false;
   undoBtn.disabled = !tree.canUndo;
+  syncScale(tree);
   statusEl.textContent = `${tree.modelName} — ${parts.length} part(s)`;
 }
 
@@ -253,6 +257,33 @@ window.app = {
   controls: controlsRef,
   canvas: domElement,
 };
+
+// applyScale rescales the model. Scaling resets the tree and clears the plan, because
+// both describe the model at its previous size, so both are redrawn afterwards.
+async function applyScale(factors) {
+  clearMessages();
+  busy(true);
+  try {
+    const had = currentPlan.cuts.length;
+    const tree = await ScaleModel(factors);
+    selectedPlan = null;
+    await render(tree);
+    showPlan(await Plan());
+    const size = tree.root.size.map((d) => d.toFixed(1)).join(" × ");
+    message(`Scaled to ${size} mm.`, "ok");
+    if (had > 0) {
+      message(
+        `The cut plan was cleared: its ${had} plane(s) named coordinates that no longer ` +
+          `describe the model.`,
+        "warn"
+      );
+    }
+  } catch (err) {
+    message(String(err), "err");
+  } finally {
+    busy(false);
+  }
+}
 
 // showPlan draws the list and keeps the panel and the Save plane button in step with
 // whether an entry is selected.
