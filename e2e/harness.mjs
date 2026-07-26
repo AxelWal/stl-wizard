@@ -303,6 +303,22 @@ function makeApp(page) {
       };
     },
 
+    // selectPrinter picks a model by the name in its label and returns the bed size
+    // the fields ended up with, so a test asserts on the effect rather than the value
+    // attribute it just set.
+    async selectPrinter(name) {
+      return page.evaluate((wanted) => {
+        const sel = document.getElementById("printer");
+        const opt = [...sel.options].find((o) => o.textContent.startsWith(wanted + " "));
+        if (!opt) {
+          throw new Error(`no printer option named ${wanted}; have ${[...sel.options].map((o) => o.textContent)}`);
+        }
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event("change"));
+        return ["bed-x", "bed-y", "bed-z"].map((id) => Number(document.getElementById(id).value));
+      }, name);
+    },
+
     async setBed({ x, y, z }) {
       await page.evaluate(
         (b) => {

@@ -56,6 +56,33 @@
 
         <div id="bed-controls" hidden>
           <h2>Fit to printer</h2>
+          <label>Printer
+            <select id="printer">
+              <optgroup label="A series">
+                <option value="180,180,180">A1 mini — 180 × 180 × 180</option>
+                <option value="256,256,256">A1 — 256 × 256 × 256</option>
+                <option value="330,320,325">A2L — 330 × 320 × 325</option>
+              </optgroup>
+              <optgroup label="P series">
+                <option value="256,256,250">P1P — 256 × 256 × 250</option>
+                <option value="256,256,250">P1S — 256 × 256 × 250</option>
+                <option value="256,256,256">P2S — 256 × 256 × 256</option>
+              </optgroup>
+              <optgroup label="X series">
+                <option value="256,256,250">X1 — 256 × 256 × 250</option>
+                <option value="256,256,250" selected>X1 Carbon — 256 × 256 × 250</option>
+                <option value="256,256,250">X1E — 256 × 256 × 250</option>
+                <option value="256,256,261">X2D — 256 × 256 × 261</option>
+              </optgroup>
+              <optgroup label="H series">
+                <option value="330,320,325">H2C — 330 × 320 × 325</option>
+                <option value="350,320,325">H2D — 350 × 320 × 325</option>
+                <option value="350,320,325">H2D Pro — 350 × 320 × 325</option>
+                <option value="340,320,340">H2S — 340 × 320 × 340</option>
+              </optgroup>
+              <option value="custom">Custom — set the size below</option>
+            </select>
+          </label>
           <label>Bed X mm <input id="bed-x" type="number" min="1" step="1" value="220" /></label>
           <label>Bed Y mm <input id="bed-y" type="number" min="1" step="1" value="220" /></label>
           <label>Bed Z mm <input id="bed-z" type="number" min="1" step="1" value="250" /></label>

@@ -3,6 +3,40 @@
 
 let els = {};
 
+// initPrinters wires the printer select to the three bed fields.
+//
+// The figures in index.html come from Bambu Studio's own machine profiles — the
+// printable_area and printable_height each printer inherits — not from marketing
+// pages. Those disagree: the X1 Carbon is sold as 256 x 256 x 256, and the slicer
+// will only accept 250 of height. The slicer's number is the one that decides
+// whether a part actually slices, so it is the one used.
+//
+// Note for the five machines with a purge zone — P1P, P1S, X1, X1 Carbon, X1E — the
+// front-left 18 x 28mm of the bed is excluded. A part filling the whole plate clashes
+// with it. The bed is not shrunk for that, because doing so would split every model
+// more than it needs; a part that large needs looking at on the plate anyway.
+function initPrinters() {
+  const sel = document.getElementById("printer");
+  const fields = [els.bedX, els.bedY, els.bedZ];
+
+  const apply = () => {
+    if (sel.value === "custom") return; // leave whatever is in the fields
+    const dims = sel.value.split(",");
+    fields.forEach((f, i) => (f.value = dims[i]));
+  };
+  sel.addEventListener("change", apply);
+
+  // Typing a size by hand means the named printer no longer describes what is in the
+  // fields, so the select has to stop claiming it does.
+  for (const f of fields) {
+    f.addEventListener("input", () => {
+      if (sel.value !== "custom") sel.value = "custom";
+    });
+  }
+
+  apply(); // start out agreeing with whichever printer is selected
+}
+
 export function initPins() {
   els = {
     enabled: document.getElementById("pins-enabled"),
@@ -18,6 +52,7 @@ export function initPins() {
     panel: document.getElementById("pin-controls"),
     bedPanel: document.getElementById("bed-controls"),
   };
+  initPrinters();
 }
 
 // num reads a field, falling back to a default when it has been emptied mid-edit

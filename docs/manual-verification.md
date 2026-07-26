@@ -167,6 +167,18 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Undo after an auto-split removes one cut, not the whole run.
 - [x] **[auto]** Enter a bed of 0. A readable error appears rather than a hang.
 
+## Printer sizes
+
+- [x] **[auto]** Choosing a printer fills the three bed fields, and the figures match
+      Bambu Studio's own profiles — checked by `scripts/verify-printers.sh`, which was
+      run and passes for all fourteen models.
+- [x] **[auto]** Typing a bed size switches the select to Custom and keeps what was
+      typed.
+- [x] **[auto]** The chosen printer actually reaches the cutter: a bed change alters
+      what Split to fit does.
+- [ ] Check a plate against the physical printer once. *(The purge zone on the P1/X1
+      machines is not modelled; a part filling the plate may clash with it.)*
+
 ## 3MF plates
 
 - [x] **[auto]** Export with two parts: two plates, one part each, the file a real zip

@@ -703,6 +703,90 @@ test("a part too big for the bed is exported anyway and named", async (app) => {
   expect.equal(info.plates, 1, "the file was written regardless");
 });
 
+group("printer sizes");
+
+// The figures come from Bambu Studio's own machine profiles, not from marketing
+// pages, and the two disagree: the X1 Carbon is sold as 256 x 256 x 256 and the
+// slicer accepts 250 of height. The slicer's figure decides whether a part actually
+// slices, so it is the one that has to be here.
+test("the printer select fills the bed fields", async (app) => {
+  await app.open("cube");
+
+  const cases = [
+    ["X1 Carbon", [256, 256, 250]],
+    ["A1 mini", [180, 180, 180]],
+    ["H2D", [350, 320, 325]],
+    ["H2S", [340, 320, 340]],
+    ["A2L", [330, 320, 325]],
+    ["X2D", [256, 256, 261]],
+  ];
+  for (const [name, want] of cases) {
+    const got = await app.selectPrinter(name);
+    expect.equal(got.join(","), want.join(","), `${name} bed size`);
+  }
+});
+
+test("every Bambu model is offered and every size is sane", async (app) => {
+  await app.open("cube");
+  const opts = await app.page.evaluate(() =>
+    [...document.querySelectorAll("#printer option")].map((o) => ({
+      label: o.textContent,
+      value: o.value,
+    }))
+  );
+
+  const printers = opts.filter((o) => o.value !== "custom");
+  // A1 mini, A1, A2L, P1P, P1S, P2S, X1, X1 Carbon, X1E, X2D, H2C, H2D, H2D Pro, H2S.
+  expect.equal(printers.length, 14, "printers offered");
+  expect.equal(opts.filter((o) => o.value === "custom").length, 1, "a Custom entry");
+
+  for (const p of printers) {
+    const dims = p.value.split(",").map(Number);
+    expect.equal(dims.length, 3, `${p.label} has three dimensions`);
+    for (const d of dims) {
+      expect.ok(Number.isFinite(d) && d >= 180 && d <= 400, `${p.label}: ${d}mm is a plausible bed size`);
+    }
+    // The label has to state the same numbers it sets, or it lies to the user.
+    for (const d of dims) {
+      expect.contains(p.label, String(d), `${p.label} names ${d}`);
+    }
+  }
+});
+
+// Typing a size by hand means the named printer no longer describes the fields, so
+// the select must stop claiming it does.
+test("typing a bed size switches the printer to Custom", async (app) => {
+  await app.open("cube");
+  await app.selectPrinter("A1 mini");
+  expect.equal(await app.value("#bed-x"), "180", "the A1 mini's bed");
+
+  await app.page.fill("#bed-x", "123");
+  expect.equal(await app.value("#printer"), "custom", "the select after a manual edit");
+  // And the typed value survives — switching to Custom must not rewrite the field.
+  expect.equal(await app.value("#bed-x"), "123", "the typed value");
+});
+
+test("choosing a printer drives what auto-split actually does", async (app) => {
+  // The select is pointless if the number never reaches the cutter. An A1 mini's
+  // 180mm bed must split a 300mm cube that an H2D's 350mm bed would leave alone.
+  await app.open("cube");
+  await app.selectPrinter("H2D");
+  const roomy = await app.autosplit();
+  expect.contains(roomy, "already fits", "a 20mm cube fits an H2D");
+
+  await app.open("cube");
+  await app.selectPrinter("A1 mini");
+  expect.contains(await app.autosplit(), "already fits", "a 20mm cube fits an A1 mini too");
+
+  // Now something that separates them.
+  await app.open("sphere");
+  await app.selectPrinter("A1 mini");
+  await app.page.fill("#bed-x", "12");
+  await app.page.fill("#bed-y", "12");
+  await app.page.fill("#bed-z", "12");
+  expect.contains(await app.autosplit(), "Split into", "a 12mm bed splits the 20mm sphere");
+});
+
 group("fit to printer");
 
 test("a bed smaller than the model splits until every piece fits", async (app) => {

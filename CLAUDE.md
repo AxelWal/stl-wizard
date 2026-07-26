@@ -141,6 +141,7 @@ that produced the figures above.
     #pins-clearance #pins-minwall
     #pins-pegside                         "2" | "1" | "dowel"
     #bed-x #bed-y #bed-z
+    #printer                              a Bambu model, or "custom"
 
 With no model loaded, `#tree-panel`, `#plane-controls`, `#pin-controls`,
 `#bed-controls` and `#actions` all carry `hidden`. A sidebar showing only
@@ -157,7 +158,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 56
+    node e2e/gui.test.mjs              # all 60
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -237,6 +238,12 @@ extension. Bambu's own export uses the production extension (external object fil
 - **`orient` must exclude triangles resting on the plate** from the overhang score,
   or a flat bottom is the worst possible score and the search avoids resting parts
   flat.
+
+The fourteen printer sizes in `index.html` come from Bambu Studio's machine profiles,
+resolved through their `inherits` chains — not from spec sheets, which disagree: the X1
+Carbon is sold as 256 tall and the slicer accepts 250. `scripts/verify-printers.sh`
+diffs the UI against the installed slicer in both directions. Run it if you touch that
+select.
 
 Verify a real export with `scripts/verify-3mf.sh` — it round-trips through the
 installed Bambu Studio flatpak. **Pass `--arrange 0`** as that script does: Bambu's

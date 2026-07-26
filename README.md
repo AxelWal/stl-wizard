@@ -9,7 +9,8 @@ U-shaped model without touching the other.
   matching at the cut. Either a printed peg on one side, or a matching hole
   in both for a dowel of your own.
 - Fit-to-printer auto-splitting, which repeatedly cuts an oversized model
-  down until every piece fits a given build volume.
+  down until every piece fits a given build volume — pick your Bambu Lab
+  printer from the list, or set the size by hand.
 - Optional repair as a model is loaded: closes holes and deletes the stray
   zero-volume debris a cut leaves behind, so a slightly broken file can be cut
   without every piece coming back flagged.
@@ -183,6 +184,37 @@ large file:
     go run ./cmd/meshrepair -in model.stl                 # just the verdict
     go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
+## Printer sizes
+
+The Printer select offers all fourteen Bambu Lab models, or Custom for anything else.
+Choosing one fills the three bed fields; typing a size by hand switches the select to
+Custom, so the named printer never disagrees with what is in the fields.
+
+**The figures come from Bambu Studio's own machine profiles, not from spec sheets**,
+and the two disagree. The X1 Carbon is sold as 256 × 256 × 256; the slicer's
+`printable_height` for it is **250**. Since the slicer decides whether a part actually
+slices, the slicer's number is the one used. Check them any time with:
+
+    scripts/verify-printers.sh
+
+which reads the installed slicer's profiles and diffs them against the UI, in both
+directions — a wrong size and a model the slicer knows that is not offered.
+
+| | X × Y × Z |
+|---|---|
+| A1 mini | 180 × 180 × 180 |
+| A1, P2S | 256 × 256 × 256 |
+| P1P, P1S, X1, X1 Carbon, X1E | 256 × 256 × 250 |
+| X2D | 256 × 256 × 261 |
+| A2L, H2C | 330 × 320 × 325 |
+| H2S | 340 × 320 × 340 |
+| H2D, H2D Pro | 350 × 320 × 325 |
+
+One caveat the bed size does not capture: on the P1P, P1S, X1, X1 Carbon and X1E the
+front-left 18 × 28 mm of the plate is a purge zone, so a part filling the whole plate
+clashes with it. The bed is not shrunk to allow for that, because it would split every
+model more than it needs — a part that nearly fills a plate wants looking at anyway.
+
 ## 3MF plates
 
 **Export 3MF plates…** writes one file holding every part, each on its own build
@@ -269,7 +301,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-56 tests over every GUI feature, pointer input included. See CLAUDE.md.
+60 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative
