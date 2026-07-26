@@ -254,3 +254,29 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       *(Needs the native file dialog.)*
 - [ ] Start an export, then cancel the folder-choice dialog. Nothing happens
       and no error appears. *(Needs the native folder dialog.)*
+
+## Whether a multi-plate 3MF really lands one part per plate
+
+`scripts/verify-3mf.sh` fails this: four plates go in, four objects come back at the
+coordinates we wrote, and only plate 1 owns anything. Three candidate causes have been
+ruled out by experiment — a missing `identify_id`, Bambu's object/part id numbering, and a
+plate stride of bed x 1.2 from `LOGICAL_PART_PLATE_GAP` — and CLAUDE.md records them so the
+time is not spent twice.
+
+The remaining explanation is that **Bambu's command line does not honour plate assignment
+on import**, and only the GUI does. That cannot be tested here: the flatpak's GUI will not
+start in this sandbox (`Invalid OpenGL version 3.4, Failed to create GLFW window`), and the
+CLI is the only way in.
+
+So, by hand:
+
+1. Cut a model into four or more parts and export a multi-plate 3MF.
+2. Open it in the Bambu Studio **GUI**, not the CLI.
+3. Look at the plate selector along the bottom. Each plate should hold exactly one part,
+   and each part should sit centred on its own plate.
+
+If the GUI shows one part per plate, our writer is correct and `verify-3mf.sh`'s plate
+assertion is measuring a CLI limitation — say so in the script and stop treating it as a
+failure. If the GUI also collapses everything onto plate 1, the writer is wrong and the
+next thing to compare is a real multi-plate project saved from the GUI, since the reference
+export used so far has only one plate.

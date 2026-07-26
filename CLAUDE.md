@@ -340,9 +340,32 @@ decides the plate, or not on its own, and the previous note here ("that was veri
 survive; the stride only affects where things are drawn") does not hold.
 
 This is not caused by writing `project_settings.config`: a file without it fails
-identically, so the defect predates that work. It has not been diagnosed. Do not trust the
-plate layout until it is, and run `scripts/verify-3mf.sh` before believing any change to
-it.
+identically, so the defect predates that work.
+
+**Three causes have been ruled out by experiment**, each reverted afterwards — do not spend
+the time again:
+
+1. **A missing `identify_id`** in `<model_instance>`. The reference export carries one;
+   adding it changed nothing.
+2. **The object/part id convention.** Bambu numbers objects 2,4,6,8 and parts 1,3,5,7 while
+   we reuse one id for both. Matching its numbering changed nothing, which also rules out
+   the id remapping on import (1,2,3,4 become 2,4,6,8) as the cause.
+3. **The plate stride.** OrcaSlicer's `PartPlate.cpp` defines
+   `LOGICAL_PART_PLATE_GAP = 1./5.`, suggesting a stride of bed x 1.2 rather than our
+   bed + 40. Using bed x 1.2 changed nothing.
+
+What is established: our file declares four plates each holding exactly one object, Bambu
+imports all four objects and preserves their transforms to the millimetre, and only plate 1
+ends up owning anything.
+
+**The most likely remaining explanation is that the CLI does not honour plate assignment on
+import at all**, and the GUI does — which would make the original note here true and this
+one true as well, since it was probably written from the GUI. Testing that needs the GUI,
+and the GUI will not start in this sandbox: `Invalid OpenGL version 3.4, Failed to create
+GLFW window`. It is a line in `docs/manual-verification.md` now.
+
+Until someone opens one of these files in the Bambu GUI, treat `verify-3mf.sh`'s plate
+assertion as unproven rather than as a known bug in our writer.
 
 Bambu's default bed with no `project_settings.config` is 200x200x100 — measured from a
 reference export — so a part placed by our stride could land off it. That much is now
