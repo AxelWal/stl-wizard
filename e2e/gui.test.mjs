@@ -722,7 +722,41 @@ test("the printer select fills the bed fields", async (app) => {
   ];
   for (const [name, want] of cases) {
     const got = await app.selectPrinter(name);
-    expect.equal(got.join(","), want.join(","), `${name} bed size`);
+    expect.equal(got.bed.join(","), want.join(","), `${name} bed size`);
+    // And the select has to report the printer that was asked for. Nine of the
+    // fourteen share a bed size, so asserting only the size cannot tell H2C from A2L
+    // — which it could not, until each option got its own value.
+    expect.contains(got.chosen, name, `the select reports ${name}`);
+  }
+});
+
+// Nine models share a bed size with another, five of them at 256 x 256 x 250, so the
+// size cannot identify the printer. Each option needs its own value or the select
+// cannot say which machine is selected — H2C read back as A2L.
+test("every printer is distinguishable from every other", async (app) => {
+  await app.open("cube");
+  const opts = await app.page.evaluate(() =>
+    [...document.querySelectorAll("#printer option")].map((o) => ({
+      value: o.value,
+      bed: o.dataset.bed || "",
+      label: o.textContent,
+    }))
+  );
+
+  const values = opts.map((o) => o.value);
+  expect.equal(new Set(values).size, values.length, `distinct option values among ${values.join(", ")}`);
+
+  // Sizes are deliberately allowed to repeat; that is the whole reason values cannot
+  // be sizes. Confirm they really do, so this test keeps its point.
+  const beds = opts.filter((o) => o.bed).map((o) => o.bed);
+  expect.ok(new Set(beds).size < beds.length, "several models to share a bed size");
+
+  // Picking each one in turn must report that one.
+  for (const o of opts.filter((x) => x.value !== "custom")) {
+    const name = o.label.split(" — ")[0];
+    const got = await app.selectPrinter(name);
+    expect.equal(got.value, o.value, `${name} to select its own option`);
+    expect.equal(got.bed.join(","), o.bed, `${name} bed size`);
   }
 });
 
@@ -732,6 +766,7 @@ test("every Bambu model is offered and every size is sane", async (app) => {
     [...document.querySelectorAll("#printer option")].map((o) => ({
       label: o.textContent,
       value: o.value,
+      bed: o.dataset.bed || "",
     }))
   );
 
@@ -741,7 +776,7 @@ test("every Bambu model is offered and every size is sane", async (app) => {
   expect.equal(opts.filter((o) => o.value === "custom").length, 1, "a Custom entry");
 
   for (const p of printers) {
-    const dims = p.value.split(",").map(Number);
+    const dims = p.bed.split(",").map(Number);
     expect.equal(dims.length, 3, `${p.label} has three dimensions`);
     for (const d of dims) {
       expect.ok(Number.isFinite(d) && d >= 180 && d <= 400, `${p.label}: ${d}mm is a plausible bed size`);

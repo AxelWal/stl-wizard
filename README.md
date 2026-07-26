@@ -301,7 +301,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-60 tests over every GUI feature, pointer input included. See CLAUDE.md.
+61 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

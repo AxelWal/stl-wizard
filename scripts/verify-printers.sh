@@ -65,11 +65,20 @@ block = re.search(r'<select id="printer">(.*?)</select>', html, re.S)
 if block is None:
     print("FAIL: frontend/index.html has no <select id=\"printer\">")
     sys.exit(1)
-for value, label in re.findall(r'<option value="([^"]+)"[^>]*>([^<]+)</option>', block.group(1)):
-    if value == "custom":
+# The option value is the model; the bed size is in data-bed. It cannot be the value:
+# nine of the fourteen machines share a bed with another, so a size-valued select
+# cannot say which printer is chosen.
+for opt in re.findall(r"<option\b[^>]*>[^<]*</option>", block.group(1)):
+    value = re.search(r'value="([^"]*)"', opt)
+    bed = re.search(r'data-bed="([^"]*)"', opt)
+    label = re.search(r">([^<]*)</option>", opt)
+    if not value or value.group(1) == "custom":
         continue
-    model = label.split(" — ")[0].strip()
-    ours[model] = tuple(int(v) for v in value.split(","))
+    if not bed:
+        print(f"FAIL {label.group(1).strip()}: no data-bed attribute")
+        sys.exit(1)
+    model = label.group(1).split(" — ")[0].strip()
+    ours[model] = tuple(int(v) for v in bed.group(1).split(","))
 
 bad = 0
 for model, dims in sorted(ours.items()):

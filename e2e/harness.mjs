@@ -306,16 +306,28 @@ function makeApp(page) {
     // selectPrinter picks a model by the name in its label and returns the bed size
     // the fields ended up with, so a test asserts on the effect rather than the value
     // attribute it just set.
+    // Selects by option element and returns both the bed size and which printer the
+    // select now reports. Setting sel.value used to be enough, but nine of the
+    // fourteen machines share a bed size, so a size-valued select landed on the first
+    // match — asking for H2C selected A2L, and the assertion passed because their beds
+    // are identical. The chosen model is returned so a test can check it got the one
+    // it asked for.
     async selectPrinter(name) {
       return page.evaluate((wanted) => {
         const sel = document.getElementById("printer");
-        const opt = [...sel.options].find((o) => o.textContent.startsWith(wanted + " "));
+        // Exact match on the model name, not a prefix: "A1" is a prefix of "A1 mini",
+        // so a prefix match would quietly select the wrong machine.
+        const opt = [...sel.options].find((o) => o.textContent.split(" — ")[0].trim() === wanted);
         if (!opt) {
           throw new Error(`no printer option named ${wanted}; have ${[...sel.options].map((o) => o.textContent)}`);
         }
-        sel.value = opt.value;
+        opt.selected = true;
         sel.dispatchEvent(new Event("change"));
-        return ["bed-x", "bed-y", "bed-z"].map((id) => Number(document.getElementById(id).value));
+        return {
+          bed: ["bed-x", "bed-y", "bed-z"].map((id) => Number(document.getElementById(id).value)),
+          chosen: sel.options[sel.selectedIndex].textContent,
+          value: sel.value,
+        };
       }, name);
     },
 

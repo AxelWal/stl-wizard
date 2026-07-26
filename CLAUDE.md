@@ -141,7 +141,7 @@ that produced the figures above.
     #pins-clearance #pins-minwall
     #pins-pegside                         "2" | "1" | "dowel"
     #bed-x #bed-y #bed-z
-    #printer                              a Bambu model, or "custom"
+    #printer                              a model slug, or "custom"; bed in data-bed
 
 With no model loaded, `#tree-panel`, `#plane-controls`, `#pin-controls`,
 `#bed-controls` and `#actions` all carry `hidden`. A sidebar showing only
@@ -158,7 +158,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 60
+    node e2e/gui.test.mjs              # all 61
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -238,6 +238,13 @@ extension. Bambu's own export uses the production extension (external object fil
 - **`orient` must exclude triangles resting on the plate** from the overhang score,
   or a flat bottom is the worst possible score and the search avoids resting parts
   flat.
+
+Each `#printer` option's value is a model slug and its bed size is in `data-bed`. The
+size cannot be the value: nine of the fourteen machines share a bed with another, five
+of them at 256x256x250, so a size-valued select cannot say which printer is chosen — it
+read H2C back as A2L, and a test selecting by value was silently exercising A2L while
+claiming to test H2C. Match options by the exact model name before the em dash, never
+by prefix: "A1" is a prefix of "A1 mini".
 
 The fourteen printer sizes in `index.html` come from Bambu Studio's machine profiles,
 resolved through their `inherits` chains — not from spec sheets, which disagree: the X1

@@ -19,9 +19,17 @@ function initPrinters() {
   const sel = document.getElementById("printer");
   const fields = [els.bedX, els.bedY, els.bedZ];
 
+  // Each option's value is the model, and the bed size is in data-bed.
+  //
+  // The size cannot be the value: nine of the fourteen machines share a bed with
+  // another — five of them are 256 x 256 x 250 — so a size-valued select cannot say
+  // which printer is chosen. Reading it back gave the first match, so H2C came back
+  // as A2L, and a test that selected by value was silently exercising the wrong one.
   const apply = () => {
-    if (sel.value === "custom") return; // leave whatever is in the fields
-    const dims = sel.value.split(",");
+    const opt = sel.options[sel.selectedIndex];
+    const bed = opt && opt.dataset.bed;
+    if (!bed) return; // Custom: leave whatever is in the fields
+    const dims = bed.split(",");
     fields.forEach((f, i) => (f.value = dims[i]));
   };
   sel.addEventListener("change", apply);
