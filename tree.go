@@ -73,12 +73,25 @@ func (t *Tree) newPart(name string, m *stl.Mesh, watertight bool) *Part {
 }
 
 func NewTree(name string, root *stl.Mesh) *Tree {
-	t := &Tree{ModelName: name, seq: treeSeq.Add(1)}
 	// Check the loaded mesh rather than assuming it is sound. A model that is
 	// already not a closed solid must say so before it is ever cut — reporting
 	// "closed: yes" for it is exactly the silent-bad-part outcome this app is
 	// meant to rule out.
-	watertight := meshcheck.Check(root, root.Epsilon()).OK()
+	return NewTreeChecked(name, root, meshcheck.Check(root, root.Epsilon()).OK())
+}
+
+// NewTreeChecked builds the tree from a root whose verdict the caller already knows.
+//
+// Executing a plan rebuilds the tree from the mesh as loaded, every time, and checking
+// that mesh again costs about a second on a 492k-triangle model — for a mesh that has
+// not changed since it was checked on load. Session carries the verdict across instead.
+//
+// The verdict passed here must be a real one. A constant, or a zero-valued Report
+// standing in for "not checked", would report an open model as a closed solid, which is
+// the one outcome this application exists to prevent; TestReplayKeepsTheRootsRealVerdict
+// loads an open box specifically to catch that.
+func NewTreeChecked(name string, root *stl.Mesh, watertight bool) *Tree {
+	t := &Tree{ModelName: name, seq: treeSeq.Add(1)}
 	t.Root = t.newPart("whole", root, watertight)
 	t.SelectedID = t.Root.ID
 	return t
@@ -180,14 +193,21 @@ func (t *Tree) replaceLeaf(id string, meshes []*stl.Mesh, watertight []bool, nam
 	return kids, nil
 }
 
-// RefreshLeaves recomputes every leaf's recorded measurements from its mesh.
+// RefreshLeaves recomputes the recorded measurements of the leaves holding the given
+// meshes, from those meshes.
+//
+// Only the ones named, because measuring means checking, and checking is the most
+// expensive thing this application does — re-checking every leaf to account for a repair
+// that touched two of them costs a full pass over geometry that did not change. With no
+// meshes named, nothing is refreshed: an empty call is a caller that has not said what
+// changed, and silently doing all of it is how the cost came back.
 //
 // Needed when a mesh is changed after the part was created — a cut that left a gap and
 // had it closed is not the geometry the part first recorded, and the sidebar must show
 // what will actually be exported.
-func (t *Tree) RefreshLeaves() {
+func (t *Tree) RefreshLeaves(changed ...*stl.Mesh) {
 	for _, p := range t.Leaves() {
-		if p.Mesh == nil {
+		if p.Mesh == nil || !among(p.Mesh, changed) {
 			continue
 		}
 		b := p.Mesh.BBox()
@@ -198,6 +218,17 @@ func (t *Tree) RefreshLeaves() {
 		p.Size = [3]float64{size[0], size[1], size[2]}
 		p.Watertight = meshcheck.Check(p.Mesh, p.Mesh.Epsilon()).OK()
 	}
+}
+
+// among reports whether m is one of the meshes, by identity: these are the very mesh
+// pointers the caller just modified, not copies of them.
+func among(m *stl.Mesh, meshes []*stl.Mesh) bool {
+	for _, x := range meshes {
+		if x == m {
+			return true
+		}
+	}
+	return false
 }
 
 // Undo reverses the most recent split.

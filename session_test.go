@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"stl-wizard/internal/cut"
 	"stl-wizard/internal/fixtures"
 	"stl-wizard/internal/stl"
 )
@@ -103,5 +104,53 @@ func TestWithTreeErrorsWhenNothingIsLoaded(t *testing.T) {
 	err := s.WithTree(func(tr *Tree) error { return nil })
 	if err == nil {
 		t.Error("expected an error when no model is loaded")
+	}
+}
+
+// Executing a plan rebuilds the tree from the mesh as loaded, and the root's verdict is
+// carried across rather than recomputed — the mesh has not changed, and on a 492k-triangle
+// model checking it again costs about a second on every single execute.
+//
+// Carrying a verdict is only safe if it is the real one. This loads a model that is NOT a
+// closed solid and asserts the rebuilt tree still says so: a carried constant, or a
+// zero-valued Report standing in for "not checked", would claim the model is closed and
+// that is the silent-bad-part outcome the application exists to prevent.
+func TestReplayKeepsTheRootsRealVerdict(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		mesh       *stl.Mesh
+		watertight bool
+	}{
+		{"openbox", fixtures.OpenBox(10), false},
+		{"cube", fixtures.Cube(10), true},
+	} {
+		app := NewApp()
+		if _, err := app.loadPath(writeFixture(t, c.name+".stl", c.mesh), false); err != nil {
+			t.Fatalf("%s: load: %v", c.name, err)
+		}
+		if got := app.view().Root.Watertight; got != c.watertight {
+			t.Fatalf("%s: on load Watertight = %v, want %v", c.name, got, c.watertight)
+		}
+
+		// A plan whose execution rebuilds the tree from the original mesh.
+		r := app.view().Root
+		if _, err := app.AddPlane(PlaneInput{
+			Origin: [3]float64{r.Min[0] + r.Size[0]/2, r.Min[1] + r.Size[1]/2, r.Min[2] + r.Size[2]/2},
+			Normal: [3]float64{0, 0, 1},
+			U:      [3]float64{1, 0, 0},
+			V:      [3]float64{0, 1, 0},
+			Width:  r.Size[0] * 3,
+			Height: r.Size[1] * 3,
+		}, cut.PinSpec{}); err != nil {
+			t.Fatalf("%s: AddPlane: %v", c.name, err)
+		}
+		out, err := app.ExecutePlan()
+		if err != nil {
+			t.Fatalf("%s: execute: %v", c.name, err)
+		}
+		if got := out.Tree.Root.Watertight; got != c.watertight {
+			t.Errorf("%s: after replay the root says Watertight = %v, want %v",
+				c.name, got, c.watertight)
+		}
 	}
 }

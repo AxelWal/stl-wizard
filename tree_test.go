@@ -283,3 +283,38 @@ func TestLeavesReturnsOnlyLeaves(t *testing.T) {
 		}
 	}
 }
+
+// RefreshLeaves re-measures the leaves whose meshes are named, and only those. Measuring
+// means checking, which is the most expensive thing this application does, so a repair that
+// rewrote two pieces must not cost a pass over every other piece in the tree.
+func TestRefreshLeavesOnlyRemeasuresTheMeshesNamed(t *testing.T) {
+	tr := NewTree("m", fixtures.Cube(10))
+	a, b := fixtures.Cube(10), fixtures.Cube(10)
+	left, right, err := tr.Split(tr.Root.ID, a, b, true, true)
+	if err != nil {
+		t.Fatalf("Split: %v", err)
+	}
+	beforeLeft, beforeRight := left.Tris, right.Tris
+
+	// Change both meshes behind the tree's back, as repair does when it closes a gap.
+	extra := fixtures.Cube(2).Tris
+	a.Tris = append(a.Tris, extra...)
+	b.Tris = append(b.Tris, extra...)
+
+	tr.RefreshLeaves(a)
+	if left.Tris != len(a.Tris) {
+		t.Errorf("the named leaf reports %d triangles, want %d", left.Tris, len(a.Tris))
+	}
+	if right.Tris != beforeRight {
+		t.Errorf("the unnamed leaf was re-measured: %d triangles, want the old %d", right.Tris, beforeRight)
+	}
+	if left.Tris == beforeLeft {
+		t.Errorf("the named leaf still reports its old triangle count %d", beforeLeft)
+	}
+
+	// Naming nothing refreshes nothing, rather than quietly refreshing everything.
+	tr.RefreshLeaves()
+	if right.Tris != beforeRight {
+		t.Errorf("an empty call re-measured a leaf: %d triangles, want %d", right.Tris, beforeRight)
+	}
+}

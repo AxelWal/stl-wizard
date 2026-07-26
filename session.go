@@ -32,6 +32,13 @@ type Session struct {
 	plan     Plan
 	origin   *stl.Mesh
 	originNm string
+	// originOK is whether origin is a closed solid, decided once when it was loaded.
+	//
+	// Rebuilding the tree does not change the mesh, so the verdict cannot change either
+	// — and scaling does not change it because a factor is positive (ScaleModel refuses
+	// zero or negative), so no scaled copy opens a surface that was closed or closes one
+	// that was open.
+	originOK bool
 
 	// scale is applied to origin whenever a tree is built, and is relative to the file
 	// as loaded. Kept as a factor rather than baked into origin so that applying the
@@ -63,6 +70,9 @@ func (s *Session) Load(name string, m *stl.Mesh) error {
 	s.origin, s.originNm = m, name
 	s.scale = [3]float64{1, 1, 1}
 	s.tree = NewTree(name, m)
+	// The root has just been checked; remember the answer so rebuilding the tree does
+	// not check the same mesh again.
+	s.originOK = s.tree.Root.Watertight
 	// A plan names parts of the model it was built against, so keeping it across a
 	// load would leave every entry targeting something that does not exist. Reset
 	// rather than Clear: a new model starts counting at "Cut 1".
@@ -101,7 +111,7 @@ func (s *Session) Replay(fn func(*Tree, *Plan) error) error {
 	if s.origin == nil {
 		return errors.New("no model is open")
 	}
-	s.tree = NewTree(s.originNm, s.working())
+	s.tree = NewTreeChecked(s.originNm, s.working(), s.originOK)
 	return fn(s.tree, &s.plan)
 }
 
@@ -139,7 +149,7 @@ func (s *Session) Rescale(factors [3]float64) error {
 		return errors.New("no model is open")
 	}
 	s.scale = factors
-	s.tree = NewTree(s.originNm, s.working())
+	s.tree = NewTreeChecked(s.originNm, s.working(), s.originOK)
 	s.plan.Reset()
 	return nil
 }

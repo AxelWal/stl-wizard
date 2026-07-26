@@ -1088,7 +1088,8 @@ func repairCutParts(tr *Tree, res *cut.Result, warnings *[]string) int {
 			chk.OpenEdges, r.TrianglesAdded, part.Volume()-before, before))
 	}
 	if closed > 0 {
-		tr.RefreshLeaves()
+		// Only the pieces repair actually rewrote; the rest of the tree is unchanged.
+		tr.RefreshLeaves(res.Part1, res.Part2)
 	}
 	return closed
 }
