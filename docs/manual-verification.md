@@ -167,6 +167,25 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Undo after an auto-split removes one cut, not the whole run.
 - [x] **[auto]** Enter a bed of 0. A readable error appears rather than a hang.
 
+## 3MF plates
+
+- [x] **[auto]** Export with two parts: two plates, one part each, the file a real zip
+      holding `3D/3dmodel.model` and `Metadata/model_settings.config`.
+- [x] **[auto]** A tall part is laid on its largest face rather than stood up, and the
+      reported height reflects it.
+- [x] **[auto]** A part too large for the bed is still exported and named in the
+      warnings.
+- [x] **Done once, by hand, against the real slicer.** `scripts/verify-3mf.sh` on a
+      two-plate export: Bambu Studio read both objects as manifold with volumes 6000
+      and 3000, and after a `--arrange 0` round trip both plates came back with one
+      part each.
+- [ ] Open an export in the Bambu Studio GUI and look at it: two plates in the plate
+      list, each holding one part, each part lying the way the message described.
+      *(The CLI proves the file parses and the plates survive; only the GUI shows
+      whether it looks right.)*
+- [ ] Slice a plate and print it. *(Nothing short of a print shows whether the chosen
+      orientation was actually a good idea.)*
+
 ## Errors
 
 - [x] **[auto]** Opening a non-STL file shows a readable error, not a stack trace.

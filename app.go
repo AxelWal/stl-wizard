@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -11,9 +14,11 @@ import (
 	"stl-cutter/internal/cut"
 	"stl-cutter/internal/geom"
 	"stl-cutter/internal/meshcheck"
+	"stl-cutter/internal/orient"
 	"stl-cutter/internal/repair"
 	"stl-cutter/internal/shells"
 	"stl-cutter/internal/stl"
+	"stl-cutter/internal/threemf"
 )
 
 // App is the bound service. Every exported method on it is callable from the
@@ -283,6 +288,174 @@ func (a *App) SeparateBodies(partID string) (*SeparateOutcome, error) {
 	}
 	out.Tree = a.view()
 	return out, nil
+}
+
+// PlateOutcome reports what the 3MF export produced.
+type PlateOutcome struct {
+	Cancelled bool   `json:"cancelled"`
+	Path      string `json:"path"`
+	Plates    int    `json:"plates"`
+	// Oriented describes what the orientation search did to each part, so the user
+	// can see whether it found anything and does not have to trust that it did.
+	Oriented []PlateReport `json:"oriented"`
+	Warnings []string      `json:"warnings"`
+}
+
+// PlateReport is one part's placement.
+type PlateReport struct {
+	Name         string  `json:"name"`
+	Plate        int     `json:"plate"`
+	OverhangArea float64 `json:"overhangArea"`
+	BaseArea     float64 `json:"baseArea"`
+	Height       float64 `json:"height"`
+	Rotated      bool    `json:"rotated"`
+	FitsPlate    bool    `json:"fitsPlate"`
+}
+
+// plateGap separates plates in world coordinates.
+//
+// 40mm because that is what Bambu Studio itself uses: a reference project it exported
+// placed plate 1's items around x=95 and plate 2's around x=335 on a 200mm bed, a
+// stride of 240. Matching it keeps the drawn layout aligned with where the slicer
+// expects its plates to be.
+//
+// The stride only affects appearance. What actually assigns a part to a plate is the
+// model_instance entry in model_settings.config, which was verified to survive a
+// round trip through Bambu Studio — see docs/manual-verification.md. Note that
+// Bambu's *command line* re-arranges on import unless given --arrange 0, and that
+// repacks everything onto plate 1; the GUI honours the stored layout.
+const plateGap = 40.0
+
+// ExportPlates writes every part to its own build plate in one 3MF, each part
+// oriented to need as little support as it can.
+func (a *App) ExportPlates(bed cut.Bed) (*PlateOutcome, error) {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "Save 3MF project",
+		DefaultFilename: "plates.3mf",
+		Filters:         []runtime.FileFilter{{DisplayName: "3MF projects (*.3mf)", Pattern: "*.3mf"}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not open the save dialog: %w", err)
+	}
+	if path == "" {
+		return &PlateOutcome{Cancelled: true}, nil
+	}
+	return a.exportPlatesTo(path, bed)
+}
+
+// ExportPlatesTo is ExportPlates once a path is known.
+//
+// Bound, not merely unexported, for the same reason as OpenPath: the save dialog
+// belongs to the Wails window and cannot be answered from a browser tab, so without
+// this the export could not be driven by a test at all.
+func (a *App) ExportPlatesTo(path string, bed cut.Bed) (*PlateOutcome, error) {
+	return a.exportPlatesTo(path, bed)
+}
+
+func (a *App) exportPlatesTo(path string, bed cut.Bed) (*PlateOutcome, error) {
+	if err := bed.Valid(); err != nil {
+		return nil, err
+	}
+
+	// Snapshot under the lock, orient and write outside it. Orientation is seconds
+	// of arithmetic on a large part; holding the session mutex through it would
+	// freeze cutting, undo and the viewer for the duration.
+	type pending struct {
+		name string
+		mesh *stl.Mesh
+	}
+	var todo []pending
+	err := a.session.WithTree(func(tr *Tree) error {
+		for _, p := range tr.Leaves() {
+			todo = append(todo, pending{name: p.Name, mesh: p.Mesh})
+		}
+		if len(todo) == 0 {
+			return errors.New("there is nothing to export")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := &PlateOutcome{Path: path, Plates: len(todo)}
+	plates := make([]threemf.Plate, 0, len(todo))
+
+	for i, p := range todo {
+		res := orient.Best(p.mesh, orient.Spec{})
+
+		// The rotated extent decides both where the part sits and whether it fits.
+		lo, hi := rotatedBounds(p.mesh, res.Rotation)
+		size := hi.Sub(lo)
+
+		// Plates are laid out in a row along X, each part centred on its own.
+		centreX := float64(i)*(bed.X+plateGap) + bed.X/2
+		centreY := bed.Y / 2
+		tx := centreX - (lo[0]+hi[0])/2
+		ty := centreY - (lo[1]+hi[1])/2
+		tz := -lo[2] // sit on the plate
+
+		fits := size[0] <= bed.X && size[1] <= bed.Y && size[2] <= bed.Z
+		out.Oriented = append(out.Oriented, PlateReport{
+			Name: p.name, Plate: i + 1,
+			OverhangArea: res.OverhangArea, BaseArea: res.BaseArea, Height: res.Height,
+			Rotated:   res.Rotation != [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1},
+			FitsPlate: fits,
+		})
+		if !fits {
+			out.Warnings = append(out.Warnings, fmt.Sprintf(
+				"%s measures %.1f x %.1f x %.1f mm once oriented and does not fit a %.0f x %.0f x %.0f bed; "+
+					"it is on its plate anyway",
+				p.name, size[0], size[1], size[2], bed.X, bed.Y, bed.Z))
+		}
+
+		// 3MF applies a transform to a row vector, p' = p·M, so the stored 3x3 is the
+		// transpose of orient's row-major rotation.
+		r := res.Rotation
+		plates = append(plates, threemf.Plate{
+			Name: p.name,
+			Mesh: p.mesh,
+			Transform: [12]float64{
+				r[0], r[3], r[6],
+				r[1], r[4], r[7],
+				r[2], r[5], r[8],
+				tx, ty, tz,
+			},
+		})
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := threemf.Write(f, plates); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// rotatedBounds returns the extent of m after applying a row-major rotation.
+func rotatedBounds(m *stl.Mesh, r [9]float64) (lo, hi geom.Vec3) {
+	lo = geom.Vec3{math.Inf(1), math.Inf(1), math.Inf(1)}
+	hi = geom.Vec3{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+	for _, t := range m.Tris {
+		for _, v := range [3]geom.Vec3{t.A, t.B, t.C} {
+			q := geom.Vec3{
+				r[0]*v[0] + r[1]*v[1] + r[2]*v[2],
+				r[3]*v[0] + r[4]*v[1] + r[5]*v[2],
+				r[6]*v[0] + r[7]*v[1] + r[8]*v[2],
+			}
+			for k := 0; k < 3; k++ {
+				lo[k] = math.Min(lo[k], q[k])
+				hi[k] = math.Max(hi[k], q[k])
+			}
+		}
+	}
+	return lo, hi
 }
 
 // PlaneInput is the gizmo's state as the frontend reports it. Arrays rather than

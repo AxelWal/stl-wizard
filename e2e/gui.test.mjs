@@ -649,6 +649,60 @@ test("the repair checkbox starts unticked", async (app) => {
   );
 });
 
+group("3mf plates");
+
+test("every part is exported to its own build plate", async (app) => {
+  await app.open("u");
+  await app.planeAcrossTheArms({ position: [15, 25, 5], width: 200, height: 200 });
+  await app.cut();
+
+  const out = await app.exportPlates();
+  expect.equal(out.plates, 2, "one plate per part");
+  expect.equal(out.oriented.length, 2, "one orientation report per part");
+  for (const [i, r] of out.oriented.entries()) {
+    expect.equal(r.plate, i + 1, `${r.name} plate number`);
+    expect.ok(r.fitsPlate, `${r.name} to fit the bed`);
+  }
+
+  const msg = await app.messages();
+  expect.contains(msg, "Wrote 2 plate(s)", "the result");
+  // Say what the orientation did, per part. "Done" alone leaves the user unable to
+  // tell a good orientation from none at all.
+  expect.contains(msg, "needing support", "the overhang figure");
+
+  // The file has to be a real zip holding one plate per part.
+  const info = await app.inspect3mf(out.path);
+  expect.equal(info.plates, 2, "plates declared in model_settings.config");
+  expect.equal(info.instances, 2, "one object assignment per plate");
+  expect.ok(info.entries.includes("3D/3dmodel.model"), "the core model to be present");
+});
+
+test("a tall bar is laid down rather than stood up", async (app) => {
+  // The U on its side is 10mm tall; standing on an arm's end it would be 40mm. The
+  // orientation search has to prefer resting on the largest flat face.
+  await app.open("u");
+  const out = await app.exportPlates();
+
+  const [r] = out.oriented;
+  expect.near(r.height, 10, 0.001, "the exported height");
+  expect.ok(r.rotated, "the part to have been turned");
+  expect.near(r.overhangArea, 0, 0.001, "a flat-lying U to need no support");
+  expect.ok(r.baseArea > 0, `a resting face, got ${r.baseArea}`);
+});
+
+test("a part too big for the bed is exported anyway and named", async (app) => {
+  await app.open("u");
+  await app.setBed({ x: 5, y: 5, z: 5 });
+  const out = await app.exportPlates();
+
+  expect.equal(out.plates, 1, "still exported");
+  expect.ok(!out.oriented[0].fitsPlate, "reported as not fitting");
+  expect.contains(await app.messages(), "does not fit", "the warning names it");
+  // Withholding the file would keep work the user can still slice by hand.
+  const info = await app.inspect3mf(out.path);
+  expect.equal(info.plates, 1, "the file was written regardless");
+});
+
 group("fit to printer");
 
 test("a bed smaller than the model splits until every piece fits", async (app) => {

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
+	"encoding/xml"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -238,6 +242,343 @@ func TestRepairReportsTheBodyCount(t *testing.T) {
 	if view.Repair.Bodies != 2 {
 		t.Errorf("Bodies = %d, want 2", view.Repair.Bodies)
 	}
+}
+
+// One plate per part, each part sitting on its own plate and nowhere near another's.
+// A slicer that saw them overlapping would arrange them itself and throw away the
+// orientation the search just chose.
+func TestExportPlatesGivesEachPartItsOwnPlate(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.Cut(view.Root.ID, PlaneInput{
+		Origin: [3]float64{15, 25, 5}, Normal: [3]float64{0, 1, 0}, Width: 100, Height: 100,
+	}, cut.PinSpec{}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	bed := cut.Bed{X: 220, Y: 220, Z: 250}
+	out, err := app.ExportPlatesTo(path, bed)
+	if err != nil {
+		t.Fatalf("ExportPlatesTo: %v", err)
+	}
+	if out.Plates != 2 {
+		t.Errorf("Plates = %d, want 2", out.Plates)
+	}
+	if len(out.Oriented) != 2 {
+		t.Fatalf("got %d reports, want 2", len(out.Oriented))
+	}
+	for i, r := range out.Oriented {
+		if r.Plate != i+1 {
+			t.Errorf("report %d is on plate %d, want %d", i, r.Plate, i+1)
+		}
+		if !r.FitsPlate {
+			t.Errorf("%s does not fit a 220mm bed; it measures %v tall", r.Name, r.Height)
+		}
+	}
+
+	// The file has to be a real 3MF, not just bytes on disk.
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("the export is not a readable zip: %v", err)
+	}
+	defer zr.Close()
+	var haveModel, haveSettings bool
+	for _, f := range zr.File {
+		switch f.Name {
+		case "3D/3dmodel.model":
+			haveModel = true
+		case "Metadata/model_settings.config":
+			haveSettings = true
+		}
+	}
+	if !haveModel || !haveSettings {
+		t.Errorf("the archive is missing the core model or the plate settings")
+	}
+}
+
+// Every part must land on its own plate's footprint and sit on the plate, not float
+// above it or sink below. The transform is the only thing that arranges them, and a
+// transposed rotation would still produce a plausible-looking file.
+func TestExportPlatesPlacesEveryPartOnItsPlate(t *testing.T) {
+	app := NewApp()
+	view, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10)), false)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := app.Cut(view.Root.ID, PlaneInput{
+		Origin: [3]float64{15, 25, 5}, Normal: [3]float64{0, 1, 0}, Width: 100, Height: 100,
+	}, cut.PinSpec{}); err != nil {
+		t.Fatalf("Cut: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	bed := cut.Bed{X: 220, Y: 220, Z: 250}
+	if _, err := app.ExportPlatesTo(path, bed); err != nil {
+		t.Fatalf("ExportPlatesTo: %v", err)
+	}
+
+	for i, box := range placedBounds(t, path) {
+		// Plate i is centred at ((i)*(220+20) + 110, 110).
+		cx := float64(i)*(bed.X+plateGap) + bed.X/2
+		cy := bed.Y / 2
+		if box.min[0] < cx-bed.X/2-1e-6 || box.max[0] > cx+bed.X/2+1e-6 {
+			t.Errorf("part %d spans x %v..%v, outside plate %d (%v..%v)",
+				i, box.min[0], box.max[0], i+1, cx-bed.X/2, cx+bed.X/2)
+		}
+		if box.min[1] < cy-bed.Y/2-1e-6 || box.max[1] > cy+bed.Y/2+1e-6 {
+			t.Errorf("part %d spans y %v..%v, outside the plate", i, box.min[1], box.max[1])
+		}
+		if math.Abs(box.min[2]) > 1e-6 {
+			t.Errorf("part %d has its lowest point at z=%v, want 0 — it must sit on the plate", i, box.min[2])
+		}
+	}
+}
+
+// Orientation must actually be applied. The U's arms are 40mm tall as loaded; laid on
+// its largest face it is shorter, and the exported height has to reflect that rather
+// than the model's original bounding box.
+func TestExportPlatesAppliesTheChosenOrientation(t *testing.T) {
+	app := NewApp()
+	// A deliberately tall thin box: standing it up is 40mm, laying it down is 10mm.
+	if _, err := app.loadPath(writeFixture(t, "bar.stl",
+		fixtures.Box(geom.Vec3{}, geom.Vec3{10, 10, 40})), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	out, err := app.ExportPlatesTo(path, cut.Bed{X: 220, Y: 220, Z: 250})
+	if err != nil {
+		t.Fatalf("ExportPlatesTo: %v", err)
+	}
+	if got := out.Oriented[0].Height; math.Abs(got-10) > 1e-6 {
+		t.Errorf("exported height = %v, want 10 — the bar should be laid down", got)
+	}
+
+	boxes := placedBounds(t, path)
+	if len(boxes) != 1 {
+		t.Fatalf("got %d placed parts, want 1", len(boxes))
+	}
+	if h := boxes[0].max[2] - boxes[0].min[2]; math.Abs(h-10) > 1e-6 {
+		t.Errorf("the placed part is %v tall, want 10 — the rotation was not applied to the file", h)
+	}
+}
+
+// The transpose has to be exercised by an asymmetric rotation.
+//
+// Every axis-aligned fixture picks a diagonal rotation like diag(1,-1,-1), which is
+// its own transpose — so writing the matrix the wrong way round changes nothing and
+// the other tests pass either way. Verified: transposing the matrix in exportPlatesTo
+// broke no test until this one existed. A box tilted by two odd angles has a slanted
+// largest face, so the chosen rotation is asymmetric and the error shows.
+func TestExportPlatesWritesTheTransformTheWayThreeMFReadsIt(t *testing.T) {
+	box := fixtures.Box(geom.Vec3{}, geom.Vec3{10, 30, 50})
+	tilted := &stl.Mesh{Tris: make([]stl.Tri, len(box.Tris))}
+	rx, rz := 0.37, 0.81 // nothing special, just not a right angle
+	turn := func(v geom.Vec3) geom.Vec3 {
+		y := v[1]*math.Cos(rx) - v[2]*math.Sin(rx)
+		z := v[1]*math.Sin(rx) + v[2]*math.Cos(rx)
+		x := v[0]*math.Cos(rz) - y*math.Sin(rz)
+		y = v[0]*math.Sin(rz) + y*math.Cos(rz)
+		return geom.Vec3{x, y, z}
+	}
+	for i, tr := range box.Tris {
+		tilted.Tris[i] = stl.Tri{A: turn(tr.A), B: turn(tr.B), C: turn(tr.C)}
+	}
+
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "tilted.stl", tilted), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	out, err := app.ExportPlatesTo(path, cut.Bed{X: 220, Y: 220, Z: 250})
+	if err != nil {
+		t.Fatalf("ExportPlatesTo: %v", err)
+	}
+
+	// A micron of tolerance: the fixture goes through a binary STL, which stores
+	// float32, so a 50mm part comes back with about 1e-6mm of drift. A transposed
+	// matrix is wrong by millimetres, so this still separates the two.
+	const tol = 1e-3
+
+	// The search must find the 30x50 face and lay the box on it, whatever angle the
+	// mesh arrived at.
+	if got := out.Oriented[0].Height; math.Abs(got-10) > tol {
+		t.Errorf("reported height = %v, want 10 — the tilted box should end up lying flat", got)
+	}
+
+	boxes := placedBounds(t, path)
+	if len(boxes) != 1 {
+		t.Fatalf("got %d placed parts, want 1", len(boxes))
+	}
+	if h := boxes[0].max[2] - boxes[0].min[2]; math.Abs(h-10) > tol {
+		t.Errorf("the placed part is %v tall, want 10 — the matrix is written transposed", h)
+	}
+	if math.Abs(boxes[0].min[2]) > tol {
+		t.Errorf("the placed part's lowest point is z=%v, want 0", boxes[0].min[2])
+	}
+}
+
+// A part too big for the bed is still exported and named. Refusing would withhold
+// work the user can still slice by hand; silence would be worse than either.
+func TestExportPlatesWarnsAboutAPartTooBigForTheBed(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300)), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	out, err := app.ExportPlatesTo(path, cut.Bed{X: 220, Y: 220, Z: 250})
+	if err != nil {
+		t.Fatalf("ExportPlatesTo: %v", err)
+	}
+	if out.Oriented[0].FitsPlate {
+		t.Error("a 300mm cube was reported as fitting a 220mm bed")
+	}
+	if len(out.Warnings) == 0 {
+		t.Error("a part that does not fit must be named in the warnings")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the file should still have been written: %v", err)
+	}
+}
+
+func TestExportPlatesRejectsANonsenseBed(t *testing.T) {
+	app := NewApp()
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	if _, err := app.ExportPlatesTo(path, cut.Bed{X: 0, Y: 0, Z: 0}); err == nil {
+		t.Error("a zero bed should be refused")
+	}
+}
+
+func TestExportPlatesWithNoModelOpen(t *testing.T) {
+	app := NewApp()
+	path := filepath.Join(t.TempDir(), "plates.3mf")
+	if _, err := app.ExportPlatesTo(path, cut.Bed{X: 220, Y: 220, Z: 250}); err == nil {
+		t.Error("exporting with nothing open should be an error")
+	}
+}
+
+type placedBox struct{ min, max geom.Vec3 }
+
+// placedBounds reads the exported 3MF back and applies each build item's transform
+// the way 3MF defines it — a row vector times the matrix — returning where every part
+// actually ends up. Independent of the writer, so a transposed matrix is caught.
+func placedBounds(t *testing.T, path string) []placedBox {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer zr.Close()
+
+	var body []byte
+	for _, f := range zr.File {
+		if f.Name != "3D/3dmodel.model" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open model: %v", err)
+		}
+		body, err = io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read model: %v", err)
+		}
+	}
+	if body == nil {
+		t.Fatal("the archive has no 3D/3dmodel.model")
+	}
+
+	var doc struct {
+		Resources struct {
+			Objects []struct {
+				ID   string `xml:"id,attr"`
+				Mesh struct {
+					Vertices struct {
+						V []struct {
+							X float64 `xml:"x,attr"`
+							Y float64 `xml:"y,attr"`
+							Z float64 `xml:"z,attr"`
+						} `xml:"vertex"`
+					} `xml:"vertices"`
+				} `xml:"mesh"`
+			} `xml:"object"`
+		} `xml:"resources"`
+		Build struct {
+			Items []struct {
+				ObjectID  string `xml:"objectid,attr"`
+				Transform string `xml:"transform,attr"`
+			} `xml:"item"`
+		} `xml:"build"`
+	}
+	if err := xml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse model: %v", err)
+	}
+
+	// The XML decoder cannot fill two float64 fields from one attribute tag, so read
+	// vertices by hand where the struct form would collapse x, y and z together.
+	var out []placedBox
+	for _, item := range doc.Build.Items {
+		var obj *struct {
+			ID   string `xml:"id,attr"`
+			Mesh struct {
+				Vertices struct {
+					V []struct {
+						X float64 `xml:"x,attr"`
+						Y float64 `xml:"y,attr"`
+						Z float64 `xml:"z,attr"`
+					} `xml:"vertex"`
+				} `xml:"vertices"`
+			} `xml:"mesh"`
+		}
+		for i := range doc.Resources.Objects {
+			if doc.Resources.Objects[i].ID == item.ObjectID {
+				obj = &doc.Resources.Objects[i]
+			}
+		}
+		if obj == nil {
+			t.Fatalf("build item names object %s, which is not in the model", item.ObjectID)
+		}
+
+		fields := strings.Fields(item.Transform)
+		if len(fields) != 12 {
+			t.Fatalf("transform %q has %d numbers, want 12", item.Transform, len(fields))
+		}
+		var m [12]float64
+		for i, f := range fields {
+			v, err := strconv.ParseFloat(f, 64)
+			if err != nil {
+				t.Fatalf("transform component %q is not a number", f)
+			}
+			m[i] = v
+		}
+
+		box := placedBox{
+			min: geom.Vec3{math.Inf(1), math.Inf(1), math.Inf(1)},
+			max: geom.Vec3{math.Inf(-1), math.Inf(-1), math.Inf(-1)},
+		}
+		for _, v := range obj.Mesh.Vertices.V {
+			q := geom.Vec3{
+				v.X*m[0] + v.Y*m[3] + v.Z*m[6] + m[9],
+				v.X*m[1] + v.Y*m[4] + v.Z*m[7] + m[10],
+				v.X*m[2] + v.Y*m[5] + v.Z*m[8] + m[11],
+			}
+			for k := 0; k < 3; k++ {
+				box.min[k] = math.Min(box.min[k], q[k])
+				box.max[k] = math.Max(box.max[k], q[k])
+			}
+		}
+		out = append(out, box)
+	}
+	return out
 }
 
 func TestLoadPathReportsAnUnreadableFile(t *testing.T) {

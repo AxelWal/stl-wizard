@@ -14,6 +14,14 @@ export function ExportAll() {
   return window['go']['main']['App']['ExportAll']();
 }
 
+export function ExportPlates(arg1) {
+  return window['go']['main']['App']['ExportPlates'](arg1);
+}
+
+export function ExportPlatesTo(arg1, arg2) {
+  return window['go']['main']['App']['ExportPlatesTo'](arg1, arg2);
+}
+
 export function OpenModel(arg1) {
   return window['go']['main']['App']['OpenModel'](arg1);
 }

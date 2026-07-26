@@ -9,6 +9,10 @@ export function Cut(arg1:string,arg2:main.PlaneInput,arg3:cut.PinSpec):Promise<m
 
 export function ExportAll():Promise<main.ExportOutcome>;
 
+export function ExportPlates(arg1:cut.Bed):Promise<main.PlateOutcome>;
+
+export function ExportPlatesTo(arg1:string,arg2:cut.Bed):Promise<main.PlateOutcome>;
+
 export function OpenModel(arg1:boolean):Promise<main.TreeView>;
 
 export function OpenPath(arg1:string,arg2:boolean):Promise<main.TreeView>;

@@ -10,11 +10,27 @@
 
 import { createRequire } from "node:module";
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const require = createRequire(import.meta.url);
+
+// Scratch space for files the suite makes the app write. Named, not deleted: when a
+// 3MF assertion fails the file itself is the evidence.
+export const scratch = mkdtempSync(path.join(os.tmpdir(), "stl-cutter-e2e-"));
+let plateSeq = 1;
+
+// unzip via the system tool rather than a hand-rolled central-directory parser. Node
+// ships no zip reader, and forty lines of one is forty lines that can be wrong.
+function unzipNames(file) {
+  return execSync(`unzip -Z1 ${JSON.stringify(file)}`, { encoding: "utf8" }).trim().split("\n");
+}
+
+function unzipEntry(file, name) {
+  return execSync(`unzip -p ${JSON.stringify(file)} ${JSON.stringify(name)}`, { encoding: "utf8" });
+}
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const APP_URL = process.env.STL_CUTTER_URL || "http://localhost:34115";
@@ -265,6 +281,26 @@ function makeApp(page) {
           el.value = String(v);
         }
       }, spec);
+    },
+
+    // exportPlates writes to a scratch path, since the save dialog belongs to the
+    // native window and a browser tab cannot answer it.
+    async exportPlates() {
+      const out = path.join(scratch, `plates-${plateSeq++}.3mf`);
+      return page.evaluate((p) => window.app.exportPlates(p), out);
+    },
+
+    // inspect3mf reads the archive back with Node, independent of anything the page
+    // did, so a file that only looks right in the outcome object is still caught.
+    async inspect3mf(file) {
+      if (!existsSync(file)) throw new Error(`the export wrote no file at ${file}`);
+      const settings = unzipEntry(file, "Metadata/model_settings.config");
+      return {
+        entries: unzipNames(file),
+        bytes: readFileSync(file).length,
+        plates: (settings.match(/key="plater_id"/g) || []).length,
+        instances: (settings.match(/key="object_id"/g) || []).length,
+      };
     },
 
     async setBed({ x, y, z }) {

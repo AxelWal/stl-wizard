@@ -15,6 +15,8 @@ U-shaped model without touching the other.
   without every piece coming back flagged.
 - Separating a file's disconnected bodies into their own parts, so several solids
   in one STL can be cut, measured and exported individually.
+- Export to a multi-plate 3MF: every part on its own build plate, each turned to
+  need as little support as it can.
 
 ## Running
 
@@ -58,6 +60,8 @@ Exits non-zero if either resulting part is not a closed solid.
     internal/fixtures    procedurally generated test meshes
     internal/repair      closing holes and clearing debris
     internal/shells      separating a mesh into its disconnected bodies
+    internal/orient      choosing which way up to print a part
+    internal/threemf     writing a multi-plate 3MF project
     cmd/cutdemo          cut a file from the command line
     cmd/meshrepair       report on and repair a file from the command line
     cmd/genfixture       write a fixture to a file
@@ -179,6 +183,43 @@ large file:
     go run ./cmd/meshrepair -in model.stl                 # just the verdict
     go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
+## 3MF plates
+
+**Export 3MF plates…** writes one file holding every part, each on its own build
+plate, each rotated to need as little support as it can. Plate size comes from the
+bed fields.
+
+Multiple build plates are **not** in the core 3MF specification — they are a Bambu
+Studio and OrcaSlicer extension, so that is what this targets. PrusaSlicer and Cura
+have no plate concept and will show every part spread across one bed.
+
+The schema was not inferred. Bambu Studio is what wrote the reference: six cubes
+exported with `--arrange 1 --export-3mf` produced six plates with one object each,
+and `Metadata/model_settings.config` was copied from the result. Verify any export
+against the real slicer with:
+
+    scripts/verify-3mf.sh plates.3mf
+
+That loads the file into Bambu Studio, re-exports it, and checks the plates came back
+one part each. **`--arrange 0` is not optional** in that script: Bambu's command line
+re-arranges on import by default and repacks everything onto plate 1, which looks
+exactly like a broken file. The GUI honours the stored layout.
+
+### Orientation
+
+A face needs support when its normal is within 45° of straight down. The search scores
+that area for each candidate direction and takes the least, breaking ties on the
+largest flat base — best adhesion, and without a tie-break the winner would be an
+accident of ordering.
+
+Triangles resting on the plate are excluded from the score. Counting them would make a
+flat bottom the worst possible result and the search would avoid resting parts flat.
+
+Candidates are the six axes plus the directions the model's own surface area points
+in, bucketed by area. That is fast and right for mechanical parts. **On an organic or
+lattice model it may find nothing better than axis-aligned** — it is a narrow search by
+choice, and widening it is one function.
+
 ## Known limitations
 
 All of these are reported at runtime — a part that is not a closed solid is
@@ -228,7 +269,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-53 tests over every GUI feature, pointer input included. See CLAUDE.md.
+56 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

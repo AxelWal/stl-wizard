@@ -20,7 +20,9 @@ type Bed struct {
 	Z float64 `json:"z"`
 }
 
-func (b Bed) valid() error {
+// Valid reports whether the bed is usable. Exported so the app layer can reject a
+// nonsense bed before doing any work, rather than duplicating the rules.
+func (b Bed) Valid() error {
 	for name, v := range map[string]float64{"width": b.X, "depth": b.Y, "height": b.Z} {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return fmt.Errorf("bed %s must be a finite number, got %v", name, v)
@@ -66,7 +68,7 @@ type AutoSplitStep struct {
 // piece. Apply steps[0] to the mesh it was planned from, then replan from the
 // real fragments; that is what App.AutoSplit does.
 func PlanAutoSplit(m *stl.Mesh, bed Bed) ([]AutoSplitStep, error) {
-	if err := bed.valid(); err != nil {
+	if err := bed.Valid(); err != nil {
 		return nil, err
 	}
 	if len(m.Tris) == 0 {

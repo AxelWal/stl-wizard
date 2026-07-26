@@ -12,3 +12,6 @@ build/bin
 # committed because the README and the docs quote its measurements.
 /testdata/*.stl
 !/testdata/u.stl
+
+# Bambu Studio's CLI drops this beside whatever it was run on
+result.json

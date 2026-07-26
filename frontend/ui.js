@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { initViewer, showParts, frameAll, cameraRef, controlsRef, domElement } from "./viewer.js";
-import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit, SeparateBodies } from "./wailsjs/go/main/App.js";
+import {
+  OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit, SeparateBodies,
+  ExportPlates, ExportPlatesTo,
+} from "./wailsjs/go/main/App.js";
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
@@ -227,6 +230,7 @@ window.app = {
   setExtent,
   planeInput,
   three: THREE,
+  exportPlates,
   mode,
   camera: cameraRef,
   controls: controlsRef,
@@ -259,6 +263,43 @@ cutBtn.addEventListener("click", async () => {
     progress(false);
     busy(false);
   }
+});
+
+// exportPlates is shared by the button and the headless handle, so driving it
+// exercises the real path. The save dialog belongs to the native window and cannot be
+// answered from a browser tab, which is why the path-taking variant exists at all.
+async function exportPlates(path) {
+  clearMessages();
+  busy(true);
+  progress(true);
+  try {
+    const out = path ? await ExportPlatesTo(path, bedSpec()) : await ExportPlates(bedSpec());
+    if (out.cancelled) return out;
+
+    message(`Wrote ${out.plates} plate(s) to ${out.path}.`, "ok");
+    // Say what the orientation search did, per part. A silent "done" would leave the
+    // user unable to tell a good orientation from none at all.
+    for (const r of out.oriented || []) {
+      const turned = r.rotated ? "rotated" : "left as it was";
+      message(
+        `Plate ${r.plate}: ${r.name} — ${turned}, ${r.height.toFixed(1)}mm tall, ` +
+          `${r.overhangArea.toFixed(0)}mm² needing support on a ${r.baseArea.toFixed(0)}mm² base.`,
+        "ok"
+      );
+    }
+    for (const w of out.warnings || []) message(w, "warn");
+    return out;
+  } catch (err) {
+    message(String(err), "err");
+    throw err;
+  } finally {
+    progress(false);
+    busy(false);
+  }
+}
+
+document.getElementById("do-plates").addEventListener("click", () => {
+  exportPlates(null).catch(() => {}); // already reported
 });
 
 document.getElementById("do-separate").addEventListener("click", async () => {

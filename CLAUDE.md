@@ -134,6 +134,7 @@ that produced the figures above.
 
     #repair-on-load                       repair holes as the model loads
     #do-separate                          split a part into its bodies
+    #do-plates                            export a multi-plate 3MF
     #plane-width #plane-height            rectangle extent
     #mode-translate #mode-rotate          gizmo mode
     #pins-enabled #pins-count #pins-diameter #pins-length
@@ -156,7 +157,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 53
+    node e2e/gui.test.mjs              # all 56
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -216,6 +217,36 @@ nothing about behaviour — that is what the browser run above is for.
   `TransformControls.getHelper()` instead; see `frontend/gizmo.js:179`.
 - `wails dev` reloads the page on every save, so a half-finished multi-file
   edit will throw in the console. Re-check after the last edit lands.
+
+## 3MF export
+
+`internal/threemf` writes plain core 3MF — a single `3D/3dmodel.model` with inline
+meshes — plus `Metadata/model_settings.config` carrying the Bambu/Orca plate
+extension. Bambu's own export uses the production extension (external object files,
+`p:UUID` everywhere, `requiredextensions="p"`); none of it is needed.
+
+**Two traps, both with tests that only exist because of them:**
+
+- **3MF transforms a point as a row vector**, `p' = p·M`, so the stored 3x3 is the
+  transpose of the usual column-vector rotation. `app.go`'s `exportPlatesTo`
+  transposes `orient`'s row-major matrix on the way out. Every axis-aligned fixture
+  picks a rotation like `diag(1,-1,-1)` which is its own transpose, so the error is
+  invisible to them — `TestExportPlatesWritesTheTransformTheWayThreeMFReadsIt`
+  tilts a box by two odd angles specifically to catch it. That test was added after
+  a transpose mutation broke nothing.
+- **`orient` must exclude triangles resting on the plate** from the overhang score,
+  or a flat bottom is the worst possible score and the search avoids resting parts
+  flat.
+
+Verify a real export with `scripts/verify-3mf.sh` — it round-trips through the
+installed Bambu Studio flatpak. **Pass `--arrange 0`** as that script does: Bambu's
+CLI re-arranges on import by default and repacks everything onto plate 1, which is
+indistinguishable from our file being wrong. The GUI does not.
+
+Bambu's default bed here is 200x200x100, not the app's 220x220x250 default, so a part
+placed by our stride can land off Bambu's bed. The plate assignment in
+`model_settings.config` is what actually decides the plate, and that was verified to
+survive; the stride only affects where things are drawn.
 
 ## Read before trusting results
 
