@@ -23,9 +23,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
 
@@ -52,9 +52,58 @@ jobs:
         run: go test ./... -race
 
       - name: Build
-        run: wails build -tags "${{ matrix.os == 'ubuntu-latest' && env.WAILS_WEBKIT_TAG || matrix.tags }}" -o stl-cutter-${{ matrix.name }}
+        run: wails build -tags "${{ matrix.os == 'ubuntu-latest' && env.WAILS_WEBKIT_TAG || matrix.tags }}" -o stl-wizard-${{ matrix.name }}
 
-      - uses: actions/upload-artifact@v5
+      # One archive per platform, because a release asset is a single file and the macOS
+      # build is a .app bundle — a directory. upload-artifact zips on its own, which is why
+      # it never needed this; a release upload does not.
+      - name: Package
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cd build/bin
+          zip -qry "../../dist/stl-wizard-${{ matrix.name }}.zip" .
+
+      - name: Package
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/bin/* -DestinationPath "dist/stl-wizard-${{ matrix.name }}.zip"
+
+      - uses: actions/upload-artifact@v7
         with:
-          name: stl-cutter-${{ matrix.name }}
-          path: build/bin/*
+          name: stl-wizard-${{ matrix.name }}
+          path: dist/stl-wizard-${{ matrix.name }}.zip
+
+  # Attach the three archives to the tag's release. A separate job because it must wait for
+  # every platform: a release that appears with one binary and gains the others minutes
+  # later is worse than one that appears complete.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          # Create it if this is the first run for the tag, otherwise replace the assets, so
+          # re-running the workflow is not an error.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip --clobber
+          else
+            gh release create "$TAG" dist/*.zip --title "$TAG" --generate-notes
+          fi
