@@ -4,7 +4,7 @@ import { OpenModel, OpenPath, Select, Cut, Undo, ExportAll, AutoSplit } from "./
 import { EventsOn } from "./wailsjs/runtime/runtime.js";
 import { initGizmo, showGizmo, hideGizmo, setMode, setExtent, extent, onChange, planeInput, gizmoGroup, mode } from "./gizmo.js";
 import { renderTree, renderInfo, leavesOf } from "./tree.js";
-import { initPins, pinSpec, bedSpec, showPanels, reportPins } from "./pins.js";
+import { initPins, pinSpec, bedSpec, showPanels, reportPins, repairOnLoad } from "./pins.js";
 
 const statusEl = document.getElementById("status");
 
@@ -108,13 +108,43 @@ async function render(tree) {
   statusEl.textContent = `${tree.modelName} — ${parts.length} part(s)`;
 }
 
+// reportRepair says what load-time repair did, and — just as importantly — what
+// it did not. Repair fills holes and drops degenerate triangles; it does not
+// correct winding, so a mesh can come back genuinely improved and still not be a
+// closed solid. Announcing the repair without that would read as a clean bill of
+// health the model has not earned.
+function reportRepair(tree) {
+  const r = tree && tree.repair;
+  if (!r) return;
+
+  const did = [];
+  if (r.holesFilled) {
+    did.push(`filled ${r.holesFilled} hole(s) with ${r.trianglesAdded} triangle(s)`);
+  }
+  if (r.degenerateRemoved) {
+    did.push(`removed ${r.degenerateRemoved} zero-area triangle(s)`);
+  }
+  message(`Repaired the mesh: ${did.join(", ")}.`, r.closed ? "ok" : "warn");
+
+  if (!r.closed) {
+    message(
+      `It is still not a closed solid — ${r.after}. Repair closes holes and drops ` +
+        `degenerate triangles, but it does not turn backwards-facing triangles around.`,
+      "warn"
+    );
+  }
+}
+
 // load is the whole open sequence given something that produces a tree, so the
 // button and the headless handle below cannot drift apart.
 async function load(loader) {
   const previousId = currentTree && currentTree.root ? currentTree.root.id : null;
   const tree = await loader();
   if (!tree) return; // nothing open, nothing to show
+  // A previous cut's warnings do not describe the model now being opened.
+  clearMessages();
   await render(tree);
+  reportRepair(tree);
   // OpenModel returns the current view unchanged when the dialog is cancelled,
   // so re-framing here would throw away a plane the user had just placed.
   if (tree.root && tree.root.id !== previousId) {
@@ -125,7 +155,7 @@ async function load(loader) {
 
 document.getElementById("open").addEventListener("click", async () => {
   try {
-    await load(OpenModel);
+    await load(() => OpenModel(repairOnLoad()));
   } catch (err) {
     statusEl.textContent = String(err);
   }
@@ -143,7 +173,9 @@ document.getElementById("open").addEventListener("click", async () => {
 // coordinate before they can drag it, and every other maths helper they might
 // want is already in here.
 window.app = {
-  openPath: (path) => load(() => OpenPath(path)),
+  // repair defaults to whatever the checkbox says, so a driven load behaves as a
+  // clicked one; pass it explicitly to test the other setting.
+  openPath: (path, repair = repairOnLoad()) => load(() => OpenPath(path, repair)),
   gizmoGroup,
   setExtent,
   planeInput,
@@ -158,8 +190,9 @@ cutBtn.addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
   busy(true);
+  const spec = pinSpec();
   try {
-    const outcome = await Cut(currentTree.selectedId, planeInput(), pinSpec());
+    const outcome = await Cut(currentTree.selectedId, planeInput(), spec);
     await render(outcome.tree);
 
     // Warnings are shown whether or not the cut succeeded. A part that is not a
@@ -171,7 +204,7 @@ cutBtn.addEventListener("click", async () => {
     } else if (!(outcome.warnings || []).length) {
       message("Cut complete. Both pieces are closed solids.", "ok");
     }
-    reportPins(outcome, message);
+    reportPins(outcome, message, spec);
   } catch (err) {
     message(String(err), "err");
   } finally {

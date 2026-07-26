@@ -14,12 +14,12 @@ export function ExportAll() {
   return window['go']['main']['App']['ExportAll']();
 }
 
-export function OpenModel() {
-  return window['go']['main']['App']['OpenModel']();
+export function OpenModel(arg1) {
+  return window['go']['main']['App']['OpenModel'](arg1);
 }
 
-export function OpenPath(arg1) {
-  return window['go']['main']['App']['OpenPath'](arg1);
+export function OpenPath(arg1, arg2) {
+  return window['go']['main']['App']['OpenPath'](arg1, arg2);
 }
 
 export function Select(arg1) {

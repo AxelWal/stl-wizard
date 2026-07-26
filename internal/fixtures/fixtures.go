@@ -168,6 +168,29 @@ func UShape(depth float64) *stl.Mesh {
 
 // NonManifold is a cube with one triangle removed, so one cap loop cannot
 // close. It drives the open-loop error path.
+// OpenBox is a cube with its top face missing: one hole bounded by four edges,
+// and the fixture internal/repair is tested against.
+//
+// A whole face rather than NonManifold's single triangle, because the missing
+// face is flat: a repair that fills it correctly restores the original volume
+// exactly, and a fill that wanders off the plane does not. That makes the volume
+// an assertion about fill quality rather than only about closure.
+//
+// The cap is found by coordinate rather than by index so it does not quietly
+// remove the wrong triangles if prism's emission order ever changes.
+func OpenBox(size float64) *stl.Mesh {
+	m := Cube(size)
+	kept := make([]stl.Tri, 0, len(m.Tris))
+	for _, t := range m.Tris {
+		if t.A[2] == size && t.B[2] == size && t.C[2] == size {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	m.Tris = kept
+	return m
+}
+
 func NonManifold() *stl.Mesh {
 	m := Cube(10)
 	m.Tris = m.Tris[:len(m.Tris)-1]

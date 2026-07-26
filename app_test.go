@@ -27,7 +27,7 @@ func TestLoadPathBuildsATree(t *testing.T) {
 	app := NewApp()
 	path := writeFixture(t, "cube.stl", fixtures.Cube(10))
 
-	view, err := app.loadPath(path)
+	view, err := app.loadPath(path, false)
 	if err != nil {
 		t.Fatalf("loadPath: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestLoadPathBuildsATree(t *testing.T) {
 // covers, since loadPath itself would still be exercised.
 func TestOpenPathLoadsWithoutADialog(t *testing.T) {
 	app := NewApp()
-	view, err := app.OpenPath(writeFixture(t, "cube.stl", fixtures.Cube(10)))
+	view, err := app.OpenPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false)
 	if err != nil {
 		t.Fatalf("OpenPath: %v", err)
 	}
@@ -63,9 +63,74 @@ func TestOpenPathLoadsWithoutADialog(t *testing.T) {
 	}
 }
 
+func TestOpenPathRepairsTheMeshWhenAsked(t *testing.T) {
+	app := NewApp()
+	path := writeFixture(t, "openbox.stl", fixtures.OpenBox(10))
+
+	view, err := app.OpenPath(path, true)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if view.Repair == nil {
+		t.Fatal("no repair report on a load that asked for repair")
+	}
+	if view.Repair.HolesFilled != 1 {
+		t.Errorf("HolesFilled = %d, want 1", view.Repair.HolesFilled)
+	}
+	if !view.Repair.Closed {
+		t.Errorf("the box should be closed after repair; before %q, after %q",
+			view.Repair.Before, view.Repair.After)
+	}
+	// The tree has to agree, or the sidebar would report a repair and still flag
+	// the part.
+	if !view.Root.Watertight {
+		t.Error("the part is still flagged after a successful repair")
+	}
+	if want := fixtures.Cube(10).Volume(); math.Abs(view.Root.Volume-want) > 1e-6 {
+		t.Errorf("volume = %v, want %v — the fill should restore the missing flat face exactly",
+			view.Root.Volume, want)
+	}
+}
+
+// Repair rewrites the user's geometry, so it must happen only when asked. A
+// broken model still loads and is still flagged without it.
+func TestOpenPathLeavesTheMeshAloneWhenRepairIsOff(t *testing.T) {
+	app := NewApp()
+	path := writeFixture(t, "openbox.stl", fixtures.OpenBox(10))
+
+	view, err := app.OpenPath(path, false)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if view.Repair != nil {
+		t.Errorf("a repair report was produced for a load that did not ask for one: %+v", view.Repair)
+	}
+	if view.Root.Watertight {
+		t.Error("the unrepaired box should still be flagged as not a closed solid")
+	}
+	if view.Root.Tris != 10 {
+		t.Errorf("Tris = %d, want the original 10 — nothing should have been added", view.Root.Tris)
+	}
+}
+
+// Asking for repair on a model that does not need it must not invent one.
+func TestOpenPathReportsNoRepairOnASoundMesh(t *testing.T) {
+	app := NewApp()
+	view, err := app.OpenPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), true)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if view.Repair != nil && view.Repair.HolesFilled != 0 {
+		t.Errorf("a sound cube needed %d hole(s) filled", view.Repair.HolesFilled)
+	}
+	if view.Root.Tris != 12 {
+		t.Errorf("Tris = %d, want 12", view.Root.Tris)
+	}
+}
+
 func TestLoadPathReportsAnUnreadableFile(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath("/nonexistent/nope.stl"); err == nil {
+	if _, err := app.loadPath("/nonexistent/nope.stl", false); err == nil {
 		t.Error("expected an error for a missing file")
 	}
 }
@@ -76,7 +141,7 @@ func TestLoadPathReportsAFileThatIsNotSTL(t *testing.T) {
 	if err := writeBytes(path, []byte("this is not an STL file at all")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := app.loadPath(path); err == nil {
+	if _, err := app.loadPath(path, false); err == nil {
 		t.Error("expected an error for a non-STL file")
 	}
 }
@@ -84,12 +149,12 @@ func TestLoadPathReportsAFileThatIsNotSTL(t *testing.T) {
 // Loading a second model must not leave the first one's parts reachable.
 func TestLoadPathReplacesTheOpenModel(t *testing.T) {
 	app := NewApp()
-	first, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)))
+	first, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false)
 	if err != nil {
 		t.Fatalf("first load: %v", err)
 	}
 
-	if _, err := app.loadPath(writeFixture(t, "tube.stl", fixtures.Tube(4, 2, 8, 24))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "tube.stl", fixtures.Tube(4, 2, 8, 24)), false); err != nil {
 		t.Fatalf("second load: %v", err)
 	}
 	if _, ok := app.session.MeshFor(first.Root.ID); ok {
@@ -103,7 +168,7 @@ func writeBytes(path string, b []byte) error {
 
 func TestCutSplitsTheSelectedPart(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -146,7 +211,7 @@ func TestCutSplitsTheSelectedPart(t *testing.T) {
 // request — the one thing this application is not allowed to do.
 func TestCutReportsHowManyPinsWereRequested(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -174,7 +239,7 @@ func TestCutReportsHowManyPinsWereRequested(t *testing.T) {
 // frontend announce "0 of 4 placed" for a cut that never asked for any.
 func TestCutReportsNoPinsRequestedWhenPinsAreOff(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -197,7 +262,7 @@ func TestCutReportsNoPinsRequestedWhenPinsAreOff(t *testing.T) {
 // the right arm attached.
 func TestCutBoundedToOneArmOfTheU(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "u.stl", fixtures.UShape(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -234,7 +299,7 @@ func TestCutBoundedToOneArmOfTheU(t *testing.T) {
 
 func TestCutRejectsAnUnknownPart(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	_, err := app.Cut("nope", PlaneInput{
@@ -247,7 +312,7 @@ func TestCutRejectsAnUnknownPart(t *testing.T) {
 
 func TestCutRejectsAPlaneThatMissesTheModel(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -262,7 +327,7 @@ func TestCutRejectsAPlaneThatMissesTheModel(t *testing.T) {
 
 func TestCutRejectsANonFinitePlane(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -282,7 +347,7 @@ func TestCutRejectsANonFinitePlane(t *testing.T) {
 // would be handed a nil mesh.
 func TestCutRefusesAPartThatWasAlreadySplit(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -312,7 +377,7 @@ func TestCutWithNoModelOpen(t *testing.T) {
 // marshals it after the lock is released while another call may be mutating.
 func TestViewReturnsADeepCopy(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -336,7 +401,7 @@ func TestViewReturnsADeepCopy(t *testing.T) {
 
 func TestUndoRestoresThePreviousState(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -368,7 +433,7 @@ func TestUndoRestoresThePreviousState(t *testing.T) {
 
 func TestUndoWithNothingToUndo(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, err := app.Undo(); err == nil {
@@ -385,7 +450,7 @@ func TestUndoWithNoModelOpen(t *testing.T) {
 
 func TestSelectChangesTheSelection(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -410,7 +475,7 @@ func TestSelectChangesTheSelection(t *testing.T) {
 // with nothing to show.
 func TestSelectRefusesASplitPart(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -427,7 +492,7 @@ func TestSelectRefusesASplitPart(t *testing.T) {
 
 func TestSelectRefusesAnUnknownPart(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, err := app.Select("nope"); err == nil {
@@ -437,7 +502,7 @@ func TestSelectRefusesAnUnknownPart(t *testing.T) {
 
 func TestExportToWritesEveryLeaf(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -471,7 +536,7 @@ func TestExportToWritesEveryLeaf(t *testing.T) {
 
 func TestExportToNamesFilesAfterTheModel(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "bracket.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "bracket.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
@@ -491,7 +556,7 @@ func TestExportToNamesFilesAfterTheModel(t *testing.T) {
 // told which files are suspect.
 func TestExportToReportsFlaggedParts(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	// Force a flagged leaf directly, since producing one through Cut reliably is
@@ -515,7 +580,7 @@ func TestExportToReportsFlaggedParts(t *testing.T) {
 
 func TestExportToReportsAnUnwritableDirectory(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, err := app.exportTo("/nonexistent/directory"); err == nil {
@@ -533,7 +598,7 @@ func TestExportWithNoModelOpen(t *testing.T) {
 // A partial failure must still report what reached the disk.
 func TestExportToReturnsWhatItWroteWhenAWriteFails(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -571,7 +636,7 @@ func TestExportToReturnsWhatItWroteWhenAWriteFails(t *testing.T) {
 
 func TestCutWithPinsAddsThemToBothParts(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -594,7 +659,7 @@ func TestCutWithPinsAddsThemToBothParts(t *testing.T) {
 // pinned parts, not the bare ones.
 func TestCutWithPinsRecordsThePinnedVolumes(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(40)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -626,7 +691,7 @@ func TestCutWithPinsRecordsThePinnedVolumes(t *testing.T) {
 func TestCutWithPinsReportsSkips(t *testing.T) {
 	app := NewApp()
 	// A thin shell has no material behind the cut face for a socket.
-	if _, err := app.loadPath(writeFixture(t, "shell.stl", fixtures.HollowBox(geom.Vec3{40, 40, 40}, 1.5))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "shell.stl", fixtures.HollowBox(geom.Vec3{40, 40, 40}, 1.5)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -647,7 +712,7 @@ func TestCutWithPinsReportsSkips(t *testing.T) {
 
 func TestCutWithoutPinsIsUnchanged(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(10)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	id := app.session.Tree().Root.ID
@@ -670,7 +735,7 @@ func TestCutWithoutPinsIsUnchanged(t *testing.T) {
 
 func TestAutoSplitLeavesAFittingModelAlone(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
@@ -688,7 +753,7 @@ func TestAutoSplitLeavesAFittingModelAlone(t *testing.T) {
 
 func TestAutoSplitDividesAnOversizedModel(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
@@ -719,7 +784,7 @@ func TestAutoSplitDividesAnOversizedModel(t *testing.T) {
 
 func TestAutoSplitIsUndoable(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, err := app.AutoSplit(cut.Bed{X: 120, Y: 120, Z: 120}, cut.PinSpec{}); err != nil {
@@ -744,7 +809,7 @@ func TestAutoSplitIsUndoable(t *testing.T) {
 
 func TestAutoSplitRejectsANonsenseBed(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "cube.stl", fixtures.Cube(50)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if _, err := app.AutoSplit(cut.Bed{X: 0, Y: 100, Z: 100}, cut.PinSpec{}); err == nil {
@@ -764,7 +829,7 @@ func TestAutoSplitWithNoModelOpen(t *testing.T) {
 // the window showing geometry that no longer exists.
 func TestAutoSplitReportsProgressWhenACutFails(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
@@ -791,7 +856,7 @@ func TestAutoSplitReportsProgressWhenACutFails(t *testing.T) {
 func TestAutoSplitSkipsALeafItCannotDivide(t *testing.T) {
 	app := NewApp()
 	// A fine-tessellated sphere has leaves the planner cannot always cut.
-	if _, err := app.loadPath(writeFixture(t, "sphere.stl", fixtures.UVSphere(80, 32, 16))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "sphere.stl", fixtures.UVSphere(80, 32, 16)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 
@@ -842,7 +907,7 @@ func TestAutoSplitSkipsALeafItCannotDivide(t *testing.T) {
 // keeps advancing during the run.
 func TestAutoSplitBracketsTheWholeRunWithOneEventPair(t *testing.T) {
 	app := NewApp()
-	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300))); err != nil {
+	if _, err := app.loadPath(writeFixture(t, "big.stl", fixtures.Cube(300)), false); err != nil {
 		t.Fatalf("load: %v", err)
 	}
 

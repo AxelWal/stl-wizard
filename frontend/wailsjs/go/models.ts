@@ -24,6 +24,7 @@ export namespace cut {
 	    clearance: number;
 	    minWall: number;
 	    pegOnPart: number;
+	    dowel: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new PinSpec(source);
@@ -38,6 +39,7 @@ export namespace cut {
 	        this.clearance = source["clearance"];
 	        this.minWall = source["minWall"];
 	        this.pegOnPart = source["pegOnPart"];
+	        this.dowel = source["dowel"];
 	    }
 	}
 	export class SkippedPin {
@@ -67,6 +69,28 @@ export namespace cut {
 
 export namespace main {
 	
+	export class RepairView {
+	    holesFilled: number;
+	    trianglesAdded: number;
+	    degenerateRemoved: number;
+	    before: string;
+	    after: string;
+	    closed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RepairView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.holesFilled = source["holesFilled"];
+	        this.trianglesAdded = source["trianglesAdded"];
+	        this.degenerateRemoved = source["degenerateRemoved"];
+	        this.before = source["before"];
+	        this.after = source["after"];
+	        this.closed = source["closed"];
+	    }
+	}
 	export class Part {
 	    id: string;
 	    name: string;
@@ -116,6 +140,7 @@ export namespace main {
 	    root?: Part;
 	    selectedId: string;
 	    canUndo: boolean;
+	    repair?: RepairView;
 	
 	    static createFrom(source: any = {}) {
 	        return new TreeView(source);
@@ -127,6 +152,7 @@ export namespace main {
 	        this.root = this.convertValues(source["root"], Part);
 	        this.selectedId = source["selectedId"];
 	        this.canUndo = source["canUndo"];
+	        this.repair = this.convertValues(source["repair"], RepairView);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -264,6 +290,7 @@ export namespace main {
 	        this.height = source["height"];
 	    }
 	}
+	
 
 }
 

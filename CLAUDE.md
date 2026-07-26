@@ -70,7 +70,8 @@ stuck on an empty sidebar and can never reach the cut.
 
 `OpenPath` (`app.go:119`) is the way round it, and `ui.js` exposes:
 
-    window.app.openPath(absolutePath)   // full open sequence: render + frame + gizmo
+    window.app.openPath(absolutePath, repair?)  // full open sequence: render + frame + gizmo
+                                        // repair defaults to the checkbox
     window.app.gizmoGroup()             // the THREE.Group carrying the plane
     window.app.setExtent(w, h)
     window.app.planeInput()             // exactly what Cut receives
@@ -131,10 +132,12 @@ that produced the figures above.
     #messages          results, warnings  #viewport        three.js canvas
     #progress          long-cut bar       #progress-bar    its fill
 
+    #repair-on-load                       repair holes as the model loads
     #plane-width #plane-height            rectangle extent
     #mode-translate #mode-rotate          gizmo mode
     #pins-enabled #pins-count #pins-diameter #pins-length
-    #pins-clearance #pins-minwall #pins-pegside
+    #pins-clearance #pins-minwall
+    #pins-pegside                         "2" | "1" | "dowel"
     #bed-x #bed-y #bed-z
 
 With no model loaded, `#tree-panel`, `#plane-controls`, `#pin-controls`,
@@ -152,7 +155,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 34
+    node e2e/gui.test.mjs              # all 45
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -229,6 +232,19 @@ wall guard actually rejected.
 A pin needs its length plus the minimum wall *behind* the cut face, so the 10mm
 cube fixture halved leaves 5mm and refuses anything longer than about 3mm. That
 is correct, and two tests depend on it.
+
+**Dowel mode** (`#pins-pegside` set to `dowel`) bores both pieces instead of
+raising a peg, and measures the wall on **both** sides — peg mode only ever
+measures the socket side, which is correct there and would let a dowel break out
+of the other one. `Diameter` means the user's stock, so the bore is
+`Diameter + 2 × Clearance`.
+
+**Repair** (`internal/repair`) fans each boundary loop from its centroid, so every
+boundary edge gains exactly one triangle and closure holds by construction. It
+does **not** fix winding, and `RepairView` carries the before/after verdicts as
+text so the sidebar can say a mesh improved without claiming it is sound. The
+`openbox` fixture is the thing to test it against; it is off by default because it
+rewrites the user's geometry.
 
 `docs/manual-verification.md` is what is left for a human: exported pins in a
 slicer, and a real model of a few hundred thousand triangles. Everything the

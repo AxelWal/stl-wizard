@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
 )
 
@@ -85,6 +86,33 @@ func TestUShapeGeometryIsAsDocumented(t *testing.T) {
 func TestNonManifoldHasAHole(t *testing.T) {
 	if got := len(NonManifold().Tris); got != 11 {
 		t.Fatalf("got %d triangles, want 11 (a cube with one face triangle removed)", got)
+	}
+}
+
+// OpenBox is the fixture repair is tested against. Its hole has to be exactly
+// one loop of four edges, and the missing face has to be flat: a repair that
+// fills it correctly then restores the original volume exactly, which is an
+// assertion a fill wandering off the plane would fail.
+func TestOpenBoxHasOneFlatFourEdgeHole(t *testing.T) {
+	m := OpenBox(10)
+	if got := len(m.Tris); got != 10 {
+		t.Fatalf("got %d triangles, want 10 (a cube less one two-triangle face)", got)
+	}
+
+	rep := meshcheck.Check(m, m.Epsilon())
+	if rep.OpenEdges != 4 {
+		t.Errorf("OpenEdges = %d, want 4", rep.OpenEdges)
+	}
+	if rep.Misoriented != 0 || rep.Degenerate != 0 {
+		t.Errorf("the only defect should be the hole, got %s", rep)
+	}
+
+	// Every remaining triangle has at least one vertex off the missing face's
+	// plane, so nothing of the top cap survived.
+	for i, tr := range m.Tris {
+		if tr.A[2] == 10 && tr.B[2] == 10 && tr.C[2] == 10 {
+			t.Errorf("triangle %d still lies in the removed face", i)
+		}
 	}
 }
 

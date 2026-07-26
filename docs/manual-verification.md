@@ -10,13 +10,14 @@ Lines marked **[auto]** are covered there and do not need doing by hand — fix
 the test instead if one of them regresses. Run the suite before any release
 build and after any change to `frontend/`.
 
-**The seven unmarked lines are what is left for a person**, each with the reason
+**The ten unmarked lines are what is left for a person**, each with the reason
 it cannot be automated: a native dialog the browser cannot answer, a slicer, or
 a model far larger than any fixture. Treat them as the outstanding work.
 
 The suite generates the fixtures it needs into `testdata/`. To make one by hand:
 
-    go run ./cmd/genfixture -name u -out testdata/u.stl   # u, cube, sphere, tube, hollowbox
+    go run ./cmd/genfixture -name u -out testdata/u.stl
+    # u, cube, sphere, tube, hollowbox, openbox (deliberately broken, for repair)
 
 Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 
@@ -94,12 +95,37 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Relaxing Min wall from 2 to 0.1 changes the outcome for the same
       geometry. That proves the guard is doing the work rather than the geometry
       refusing anyway.
+- [x] **[auto]** Choose "holes both sides" and cut. Both pieces lose material and
+      neither gains any, and the message gives the bore, the depth, and how much
+      stock to cut.
+- [x] **[auto]** Dowel mode refuses a hole that would break out of the far side of
+      *either* piece, including the side peg mode does not measure.
 - [ ] Export both pieces and open them in a slicer: one has raised pegs on the cut
       face, the other matching sockets, and both are watertight.
       *(Needs a slicer. The volume arithmetic is checked automatically, but only a
       slicer shows whether the pieces actually seat together.)*
+- [ ] Print a dowel joint and check a piece of your own stock actually slides into
+      both holes and seats. *(The clearance arithmetic is checked automatically;
+      only a print shows whether the fit is right in practice.)*
 - [ ] The pegs line up with the sockets — same count, same positions.
       *(Same reason. Go tests check the positions; this checks the print.)*
+
+## Repair on load
+
+- [x] **[auto]** The checkbox starts unticked.
+- [x] **[auto]** Load `openbox.stl` with it unticked: the part is flagged ⚠ and
+      reports `Closed: no`, and nothing claims to have repaired anything.
+- [x] **[auto]** Tick it and load again: the message says how many holes were
+      filled, the part reports `Closed: yes`, and the volume is the full 8000 mm³
+      of the cube the fixture came from.
+- [x] **[auto]** A repaired model then cuts into two closed halves — which is the
+      entire point of the feature.
+- [ ] Load a real broken download with it ticked, export the result, and open it in
+      a slicer. *(No fixture stands in for the ways real exporters break meshes.)*
+- [ ] Load a model whose only fault is backwards-facing triangles. The message says
+      it is still not a closed solid and names winding as the reason, rather than
+      implying a clean bill of health.
+      *(Not automated: no fixture currently has that as its only fault.)*
 
 ## Fit to printer
 

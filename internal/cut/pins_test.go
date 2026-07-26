@@ -450,6 +450,119 @@ func TestApplyPinsAddsMaterialToOnePartAndRemovesItFromTheOther(t *testing.T) {
 
 // This is the property that makes pins usable: both parts must still be closed
 // solids afterwards, or neither will print.
+// Dowel mode bores a hole into both parts and raises no peg, so the user joins
+// the pieces with their own round stock. Both parts must therefore lose material
+// — in peg mode exactly one of them gains it.
+func TestApplyPinsDowelRemovesMaterialFromBothParts(t *testing.T) {
+	res, s, _ := cutCube(t)
+	before1, before2 := res.Part1.Volume(), res.Part2.Volume()
+
+	ps := PinSpec{Enabled: true, Dowel: true, Count: 4, Diameter: 4, Length: 6}.withDefaults()
+	out, err := ApplyPins(res, s, ps)
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed == 0 {
+		t.Fatalf("no dowel holes placed on a 40mm face; skipped: %+v", out.Skipped)
+	}
+
+	if res.Part1.Volume() >= before1 {
+		t.Errorf("part 1 volume %v did not shrink from %v — a dowel hole removes material",
+			res.Part1.Volume(), before1)
+	}
+	if res.Part2.Volume() >= before2 {
+		t.Errorf("part 2 volume %v did not shrink from %v — a dowel hole removes material",
+			res.Part2.Volume(), before2)
+	}
+
+	// The two holes take the same stock, so they must be the same size. Anything
+	// else means one side was bored with the peg radius.
+	lost1, lost2 := before1-res.Part1.Volume(), before2-res.Part2.Volume()
+	if math.Abs(lost1-lost2) > 1e-6*lost1 {
+		t.Errorf("the two sides lost different amounts (%v against %v), so the holes do not match", lost1, lost2)
+	}
+
+	// Each hole is a cylinder of the stock radius plus clearance, bored to the
+	// length plus clearance.
+	r := ps.Diameter/2 + ps.Clearance
+	want := float64(out.Placed) * math.Pi * r * r * (ps.Length + ps.Clearance)
+	if math.Abs(lost1-want) > 0.02*want {
+		t.Errorf("part 1 lost %v, want about %v for %d holes of radius %v", lost1, want, out.Placed, r)
+	}
+}
+
+func TestApplyPinsDowelLeavesBothPartsWatertight(t *testing.T) {
+	res, s, eps := cutCube(t)
+
+	ps := PinSpec{Enabled: true, Dowel: true, Count: 3, Diameter: 5, Length: 6}.withDefaults()
+	out, err := ApplyPins(res, s, ps)
+	if err != nil {
+		t.Fatalf("ApplyPins: %v", err)
+	}
+	if out.Placed == 0 {
+		t.Fatalf("no dowel holes placed; skipped: %+v", out.Skipped)
+	}
+
+	if rep := meshcheck.Check(res.Part1, eps); !rep.OK() {
+		t.Errorf("part 1 after dowelling: %s", rep)
+	}
+	if rep := meshcheck.Check(res.Part2, eps); !rep.OK() {
+		t.Errorf("part 2 after dowelling: %s", rep)
+	}
+}
+
+// The one place dowel mode is not simply the socket path run twice.
+//
+// Peg mode bores only the socket part, so it measures the material behind one
+// face. A dowel hole is bored into both, so it can break out of the far side of
+// either. This cuts a slab thick on one side of the plane and thin on the other:
+// peg mode places, because the side it measures has room, and dowel mode must
+// refuse, because the side peg mode never looks at does not.
+func TestApplyPinsDowelChecksTheWallOnBothSides(t *testing.T) {
+	// 10mm of material below the cut plane, 2mm above it.
+	build := func() (*Result, Spec) {
+		m := fixtures.Box(geom.Vec3{}, geom.Vec3{40, 40, 12})
+		s := SpecFromNormal(geom.Vec3{20, 20, 10}, geom.Vec3{0, 0, 1}, 200, 200)
+		res, err := Split(m, s)
+		if err != nil {
+			t.Fatalf("Split: %v", err)
+		}
+		return res, s
+	}
+
+	// Depth 3 + clearance 0.15 + wall 1 needs 4.15mm behind the face: the 10mm
+	// side has it, the 2mm side does not.
+	base := PinSpec{Enabled: true, Count: 2, Diameter: 4, Length: 3, Clearance: 0.15, MinWall: 1, PegOnPart: 2}
+
+	res, s := build()
+	peg, err := ApplyPins(res, s, base)
+	if err != nil {
+		t.Fatalf("ApplyPins peg: %v", err)
+	}
+	if peg.Placed == 0 {
+		t.Fatalf("peg mode should place here — the socket side has 10mm; skipped: %+v", peg.Skipped)
+	}
+
+	res, s = build()
+	dowelSpec := base
+	dowelSpec.Dowel = true
+	dowel, err := ApplyPins(res, s, dowelSpec)
+	if err != nil {
+		t.Fatalf("ApplyPins dowel: %v", err)
+	}
+	if dowel.Placed != 0 {
+		t.Errorf("dowel mode placed %d hole(s), but the far side has only 2mm of material", dowel.Placed)
+	}
+	if len(dowel.Skipped) == 0 {
+		t.Error("a refused dowel hole must be reported with its measurement")
+	}
+	for _, sk := range dowel.Skipped {
+		if sk.Measured >= sk.Required {
+			t.Errorf("skip reports %vmm available against %vmm needed, which would not be a refusal", sk.Measured, sk.Required)
+		}
+	}
+}
+
 func TestApplyPinsLeavesBothPartsWatertight(t *testing.T) {
 	res, s, eps := cutCube(t)
 

@@ -205,10 +205,26 @@ function makeApp(page) {
     },
 
     // open loads a fixture through the same sequence the Open button uses.
-    async open(name) {
+    // repair defaults to whatever the checkbox says, as a click would.
+    async open(name, repair) {
       const file = fixture(name);
-      await page.evaluate((f) => window.app.openPath(f), file);
+      await page.evaluate(
+        ({ f, repair }) => (repair === undefined ? window.app.openPath(f) : window.app.openPath(f, repair)),
+        { f: file, repair }
+      );
       await page.waitForFunction(() => !document.getElementById("tree-panel").hidden);
+    },
+
+    async setRepairOnLoad(on) {
+      await page.evaluate((v) => {
+        document.getElementById("repair-on-load").checked = v;
+      }, on);
+    },
+
+    async setPinStyle(value) {
+      await page.evaluate((v) => {
+        document.getElementById("pins-pegside").value = v;
+      }, value);
     },
 
     text: (sel) => page.$eval(sel, (el) => el.textContent),

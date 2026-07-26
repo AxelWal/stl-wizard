@@ -6,9 +6,12 @@ U-shaped model without touching the other.
 
 - Alignment pins, with configurable diameter, length, clearance and a
   minimum wall guard, so printed pieces peg together instead of just
-  matching at the cut.
+  matching at the cut. Either a printed peg on one side, or a matching hole
+  in both for a dowel of your own.
 - Fit-to-printer auto-splitting, which repeatedly cuts an oversized model
   down until every piece fits a given build volume.
+- Optional repair of holes in a model as it is loaded, so a slightly broken
+  download can be cut without every piece coming back flagged.
 
 ## Running
 
@@ -63,6 +66,18 @@ pin the guard allows: one part gets raised pegs, the other matching bored
 sockets, so the two pieces locate against each other instead of just
 matching at the cut.
 
+**Holes both sides** is the alternative, chosen with the Style select. Neither
+piece gets a peg; both are bored the same, and the two are joined with round
+stock of your own — a piece of filament, a rod, a cocktail stick. `Diameter`
+then means that stock rather than the hole, so the bore comes out
+`Diameter + 2 × Clearance` and it actually slides in. `Length` is the depth of
+each hole in both modes, so the piece to cut is about twice it; the message
+after the cut gives the figure.
+
+Dowel mode checks the wall on **both** sides. A printed peg is only bored into
+one piece, so peg mode measures the material behind one face; a dowel hole can
+break out of the far side of either, and the thinner side governs.
+
 The guard is a wall check, not a suggestion. A pin is skipped when there is
 not at least the minimum wall of material around it — in the plane of the
 cut face, clear of every edge and every other pin — or behind it, for the
@@ -82,6 +97,23 @@ the quarantine attribute) to get past it.
 **The workflow itself has never been run.** It has been written and
 reviewed, but no tag has yet been pushed, so it has not executed on a real
 runner. The first tag push is what proves it actually works end to end.
+
+## Repair
+
+**Repair holes on load** is off by default, because it rewrites the geometry you
+handed over. Ticked, it closes every hole in the model as it is opened and says
+what it did. A model left unrepaired still loads and is still flagged, exactly as
+before.
+
+Each hole's rim is fanned from its own centroid, so every boundary edge gains
+exactly one triangle and becomes a shared edge — closed by construction rather
+than by hope. A rim that is not flat gets a geometrically approximate fill, but it
+does get closed.
+
+**It does not turn backwards-facing triangles around.** That needs a consistent
+orientation propagated across the whole surface, which is a different job. A mesh
+whose only fault is winding comes back reported and otherwise untouched, and the
+sidebar says so rather than implying a clean bill of health.
 
 ## Known limitations
 
@@ -132,7 +164,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-34 tests over every GUI feature, pointer input included. See CLAUDE.md.
+45 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

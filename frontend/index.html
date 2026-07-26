@@ -18,6 +18,10 @@
       <aside id="sidebar">
         <h1>STL Cutter</h1>
         <button id="open">Open STL…</button>
+        <label id="repair-label">
+          <input id="repair-on-load" type="checkbox" />
+          Repair holes on load
+        </label>
         <p id="status">No model loaded.</p>
         <div id="tree-panel" hidden>
           <h2>Parts</h2>
@@ -40,10 +44,11 @@
           <label>Length mm <input id="pins-length" type="number" min="0.1" step="0.1" value="8" /></label>
           <label>Clearance mm <input id="pins-clearance" type="number" min="0" step="0.05" value="0.15" /></label>
           <label>Min wall mm <input id="pins-minwall" type="number" min="0" step="0.1" value="1" /></label>
-          <label>Pegs on
+          <label>Style
             <select id="pins-pegside">
-              <option value="2" selected>the cut-off piece</option>
-              <option value="1">the piece left behind</option>
+              <option value="2" selected>peg on the cut-off piece</option>
+              <option value="1">peg on the piece left behind</option>
+              <option value="dowel">holes both sides, for your own dowel</option>
             </select>
           </label>
         </div>

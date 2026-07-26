@@ -11,6 +11,9 @@ html, body { margin: 0; height: 100%; font: 13px/1.5 system-ui, sans-serif; }
 #viewport canvas { display: block; }
 button { width: 100%; padding: 6px; margin-bottom: 8px; cursor: pointer; }
 #status { color: #999; }
+/* Sits above the status line rather than in a panel: the panels are hidden until
+   a model is open, and this has to be reachable before that. */
+#repair-label { font-size: 12px; margin-bottom: 12px; }
 #sidebar h2 { font-size: 12px; margin: 16px 0 8px; color: #aaa; text-transform: uppercase; }
 #sidebar label { display: block; margin-bottom: 6px; color: #bbb; }
 #sidebar label input { width: 100%; padding: 4px; }

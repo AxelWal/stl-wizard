@@ -29,6 +29,10 @@ function num(el, fallback) {
 }
 
 export function pinSpec() {
+  // The style select carries both the peg side and dowel mode, since they are one
+  // choice for the user: either a peg goes on one of the two pieces, or neither
+  // gets one and both are bored for their own dowel.
+  const dowel = els.pegside.value === "dowel";
   return {
     enabled: els.enabled.checked,
     count: Math.max(1, Math.round(num(els.count, 4))),
@@ -37,7 +41,14 @@ export function pinSpec() {
     clearance: num(els.clearance, 0.15),
     minWall: num(els.minwall, 1),
     pegOnPart: parseInt(els.pegside.value, 10) === 1 ? 1 : 2,
+    dowel,
   };
+}
+
+// repairOnLoad is read at the moment Open is clicked rather than held as state,
+// matching OpenModel's parameter: what a load did stays a property of that load.
+export function repairOnLoad() {
+  return document.getElementById("repair-on-load").checked;
 }
 
 export function bedSpec() {
@@ -56,22 +67,31 @@ export function showPanels() {
 // reportPins turns a cut's pin outcome into messages. A skipped pin is always
 // surfaced with the clearance actually measured: the user needs to know their
 // pieces will not locate against each other, and why.
-export function reportPins(outcome, message) {
+export function reportPins(outcome, message, spec) {
   if (!outcome) return;
+  const dowel = !!(spec && spec.dowel);
+  const noun = dowel ? "dowel hole pair" : "alignment pin";
   if (outcome.pinsPlaced > 0) {
     // Count is a target: placement grids the cut face and stops when it runs
     // out of room, and a pin it never found a candidate for leaves no
     // SkippedPin behind to explain itself. Reporting only the placed count
     // would let the user read "Placed 1" as having got the 8 they asked for.
-    if (outcome.pinsRequested > outcome.pinsPlaced) {
-      message(
-        `Placed ${outcome.pinsPlaced} of ${outcome.pinsRequested} alignment pin(s) — ` +
-          `the cut face had room for no more.`,
-        "warn"
-      );
-    } else {
-      message(`Placed ${outcome.pinsPlaced} alignment pin(s).`, "ok");
+    const short = outcome.pinsRequested > outcome.pinsPlaced;
+    let text = short
+      ? `Placed ${outcome.pinsPlaced} of ${outcome.pinsRequested} ${noun}(s) — the cut face had room for no more.`
+      : `Placed ${outcome.pinsPlaced} ${noun}(s).`;
+
+    // In dowel mode the user has to cut the joining piece themselves, so the
+    // message has to say what to cut. The hole is the stock plus clearance all
+    // round, and there is one hole of that depth on each side.
+    if (dowel) {
+      const hole = spec.diameter + 2 * spec.clearance;
+      const depth = spec.length + spec.clearance;
+      text +=
+        ` Each hole is ${hole.toFixed(2)}mm wide and ${depth.toFixed(2)}mm deep,` +
+        ` so cut about ${(2 * depth).toFixed(1)}mm of ${spec.diameter}mm stock.`;
     }
+    message(text, short ? "warn" : "ok");
   }
   for (const s of outcome.pinsSkipped || []) {
     message(

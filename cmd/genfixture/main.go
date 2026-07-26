@@ -27,8 +27,11 @@ func build(name string) (*stl.Mesh, error) {
 		return fixtures.Tube(5, 3, 20, 48), nil
 	case "hollowbox":
 		return fixtures.HollowBox(geom.Vec3{20, 20, 20}, 1), nil
+	case "openbox":
+		// Deliberately broken: a cube missing its top face, for exercising repair.
+		return fixtures.OpenBox(20), nil
 	default:
-		return nil, fmt.Errorf("unknown fixture %q; want u, cube, sphere, tube or hollowbox", name)
+		return nil, fmt.Errorf("unknown fixture %q; want u, cube, sphere, tube, hollowbox or openbox", name)
 	}
 }
 

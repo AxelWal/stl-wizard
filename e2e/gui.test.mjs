@@ -383,6 +383,128 @@ test("pins left off place nothing and say nothing about pins", async (app) => {
   for (const p of parts) expect.equal(p.volume, 500, `${p.label} is an unpinned half`);
 });
 
+group("dowel holes");
+
+test("dowel mode bores both pieces and raises no peg", async (app) => {
+  await app.open("cube");
+  await app.setPins({ count: 1, diameter: 3, length: 3, clearance: 0.15, minwall: 1 });
+  await app.setPinStyle("dowel");
+  await app.placePlane({ position: [5, 5, 5], width: 100, height: 100 });
+  const msg = await app.cut();
+
+  expect.contains(msg, "dowel hole pair", "the message to name what was made");
+  expect.contains(msg, "closed solids", "both pieces to survive being bored");
+
+  // Peg mode leaves one piece heavier than the bare half. A dowel takes material
+  // out of both, which is the whole difference between the two modes.
+  const parts = await app.parts();
+  expect.equal(parts.length, 2, "part count");
+  for (const p of parts) {
+    expect.ok(p.volume < 500, `${p.label} is ${p.volume}mm³; a bored half must be under the bare 500`);
+    expect.ok(p.closed, `${p.label} to be a closed solid`);
+  }
+
+  // Both holes take the same dowel, so they must remove the same amount.
+  const [a, b] = parts.map((p) => p.volume);
+  expect.near(a, b, 1, "the two pieces to lose the same amount");
+});
+
+test("dowel mode says what stock to cut", async (app) => {
+  await app.open("cube");
+  await app.setPins({ count: 1, diameter: 3, length: 3, clearance: 0.15, minwall: 1 });
+  await app.setPinStyle("dowel");
+  await app.placePlane({ position: [5, 5, 5], width: 100, height: 100 });
+  const msg = await app.cut();
+
+  // The user has to cut the joining piece themselves, so the numbers have to be
+  // there: hole 3 + 2*0.15 = 3.30mm wide, 3 + 0.15 = 3.15mm deep each side.
+  expect.contains(msg, "3.30mm wide", "the bore diameter");
+  expect.contains(msg, "3.15mm deep", "the depth of each hole");
+  expect.contains(msg, "6.3mm of 3mm stock", "how much stock to cut");
+});
+
+test("switching back to peg mode still raises a peg", async (app) => {
+  await app.open("cube");
+  await app.setPins({ count: 1, diameter: 3, length: 3, clearance: 0.15, minwall: 1 });
+  await app.setPinStyle("dowel");
+  await app.setPinStyle("2");
+  await app.placePlane({ position: [5, 5, 5], width: 100, height: 100 });
+  const msg = await app.cut();
+
+  expect.contains(msg, "alignment pin", "peg wording, not dowel wording");
+  expect.absent(msg, "dowel", "no dowel wording once the style is switched back");
+  const parts = await app.parts();
+  expect.ok(
+    parts.some((p) => p.volume > 500),
+    `one piece to gain a peg, got ${parts.map((p) => p.volume).join(", ")}`
+  );
+});
+
+group("repair on load");
+
+test("a holed model loads flagged when repair is off", async (app) => {
+  await app.setRepairOnLoad(false);
+  await app.open("openbox");
+
+  const [part] = await app.parts();
+  expect.ok(!part.closed, "the open box to be reported as not a closed solid");
+  expect.ok(part.flagged, "the open box to carry a ⚠ in the parts list");
+  expect.absent(await app.messages(), "Repaired", "no repair message when repair is off");
+});
+
+test("ticking repair closes the holes and says so", async (app) => {
+  await app.setRepairOnLoad(true);
+  await app.open("openbox");
+
+  const msg = await app.messages();
+  expect.contains(msg, "Repaired the mesh", "the repair to be reported");
+  expect.contains(msg, "filled 1 hole", "how many holes were filled");
+
+  const [part] = await app.parts();
+  expect.ok(part.closed, `the repaired box to be a closed solid, sidebar says: ${msg}`);
+  expect.ok(!part.flagged, "no ⚠ on a repaired part");
+
+  // The missing face was flat, so a correct fill restores the exact volume of the
+  // 20mm cube the fixture was cut from.
+  expect.near(part.volume, 8000, 1, "the repaired volume");
+});
+
+test("a repaired model can then be cut into closed pieces", async (app) => {
+  // Repair exists so a broken download can be cut. If the repaired mesh still
+  // produced flagged pieces the feature would be pointless.
+  await app.setRepairOnLoad(true);
+  await app.open("openbox");
+  await app.placePlane({ position: [10, 10, 10], width: 100, height: 100 });
+  const msg = await app.cut();
+
+  expect.contains(msg, "closed solids", `both halves to be sound, got: ${msg}`);
+  const parts = await app.parts();
+  expect.equal(parts.length, 2, "part count");
+  for (const p of parts) {
+    expect.ok(p.closed, `${p.label} to be a closed solid`);
+    expect.near(p.volume, 4000, 1, `${p.label} to be half the 8000mm³ box`);
+  }
+});
+
+test("repair claims nothing on a model that does not need it", async (app) => {
+  await app.setRepairOnLoad(true);
+  await app.open("cube");
+
+  expect.absent(await app.messages(), "Repaired", "no repair message for a sound cube");
+  const [part] = await app.parts();
+  expect.equal(part.tris, 12, "triangle count unchanged");
+  expect.ok(part.closed, "still a closed solid");
+});
+
+test("the repair checkbox starts unticked", async (app) => {
+  // Repair rewrites the user's geometry, so it has to be asked for.
+  expect.equal(
+    await app.page.$eval("#repair-on-load", (el) => el.checked),
+    false,
+    "the repair checkbox to start unticked"
+  );
+});
+
 group("fit to printer");
 
 test("a bed smaller than the model splits until every piece fits", async (app) => {

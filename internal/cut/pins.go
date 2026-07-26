@@ -26,8 +26,23 @@ type PinSpec struct {
 	// it; a pin failing either is skipped and reported.
 	MinWall float64 `json:"minWall"`
 	// PegOnPart is 1 or 2 — which side receives the pegs and which the sockets.
+	// Ignored when Dowel is set, since neither side gets a peg.
 	PegOnPart int `json:"pegOnPart"`
+
+	// Dowel bores a matching hole into both parts instead of raising a peg on
+	// one, so the pieces are joined with the user's own round stock — a length of
+	// filament, a rod, a cocktail stick. Diameter then means that stock, and each
+	// hole comes out Diameter + 2*Clearance wide so it slides in. Length is the
+	// depth of each hole, as in peg mode, so the dowel to cut is about twice it.
+	Dowel bool `json:"dowel"`
 }
+
+// HoleDiameter is the bore a dowel hole ends up with: the stock plus clearance on
+// both sides.
+func (ps PinSpec) HoleDiameter() float64 { return ps.Diameter + 2*ps.Clearance }
+
+// DowelLength is roughly how long a piece of stock has to be to fill both holes.
+func (ps PinSpec) DowelLength() float64 { return 2 * (ps.Length + ps.Clearance) }
 
 // withDefaults fills in the values the UI leaves out.
 //
@@ -399,13 +414,26 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	// from its own material: part 1's face looks along +N, part 2's along -N.
 	// triangulateFace and repaveFace both emit along +N, so it is part 2 — whether
 	// it carries the peg or the socket — whose re-paved face has to be flipped.
+	// socketDir is where the socket is bored and pegDir where the peg extends. In
+	// peg mode they are the same direction, because the peg fills the socket. In
+	// dowel mode there is no peg: each part is bored into its own material, so the
+	// two run opposite ways.
 	pegPart, socketPart := res.Part2, res.Part1
 	pegDir := cutPlane.N.Unit().Scale(-1)
+	socketDir := pegDir
 	pegFlip, socketFlip := true, false
-	if ps.PegOnPart == 1 {
+	if !ps.Dowel && ps.PegOnPart == 1 {
 		pegPart, socketPart = res.Part1, res.Part2
 		pegDir = cutPlane.N.Unit()
+		socketDir = pegDir
 		pegFlip, socketFlip = false, true
+	}
+	if ps.Dowel {
+		// pegPart stays part 2, whose material lies along +N, and socketPart part 1,
+		// whose material lies along -N. The face flips are unchanged: they depend on
+		// which side of the plane a part is, not on what is bored into it.
+		pegDir = cutPlane.N.Unit()
+		socketDir = cutPlane.N.Unit().Scale(-1)
 	}
 
 	idxPeg, groups, origin, u, v, ok := cutFace(pegPart, cutPlane, eps)
@@ -446,16 +474,33 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 	// cases — with the pegs on part 1 the two run the circle in opposite orders —
 	// and it does not need to be: the edges coincide either way, and what has to
 	// agree is the orientation the wall and the hole give them.
-	pu, pv := u, v
-	if pegDir.Dot(u.Cross(v)) < 0 {
-		pv = v.Scale(-1)
+	basisFor := func(dir geom.Vec3) (geom.Vec3, geom.Vec3) {
+		if dir.Dot(u.Cross(v)) < 0 {
+			return u, v.Scale(-1)
+		}
+		return u, v
 	}
+	pu, pv := basisFor(pegDir)
+	su, sv := basisFor(socketDir)
 
 	socketGrid := newRayGrid(socketPart)
 	r := ps.Diameter / 2
 	socketR := r + ps.Clearance
 	socketDepth := ps.Length + ps.Clearance
 	axialNeed := socketDepth + ps.MinWall
+
+	// In dowel mode the hole on the peg part is a bore of the socket's dimensions
+	// rather than a peg of the stock's, and it needs its own ray grid: a dowel hole
+	// can break out of the far side of either piece, and peg mode only ever
+	// measures one of them.
+	pegR, pegLen, pegCavity := r, ps.Length, false
+	var pegGrid *rayGrid
+	axialReason := "not enough material behind the face for the socket"
+	if ps.Dowel {
+		pegR, pegLen, pegCavity = socketR, socketDepth, true
+		pegGrid = newRayGrid(pegPart)
+		axialReason = "not enough material behind the face for the dowel hole"
+	}
 
 	// Circles to punch into each part's face, and the cylinders to close them.
 	pegHoles := map[int][]faceLoop{}
@@ -474,23 +519,31 @@ func ApplyPins(res *Result, s Spec, ps PinSpec) (*PinResult, error) {
 		for _, p := range positions {
 			centre3 := origin.Add(u.Scale(p.X)).Add(v.Scale(p.Y))
 
-			have := axialClearance(socketGrid, centre3, pegDir, socketR, u, v, eps)
+			have := axialClearance(socketGrid, centre3, socketDir, socketR, u, v, eps)
+			// A dowel is bored into both pieces, so the thinner side governs. Peg
+			// mode measures only the socket side, which is correct there and would
+			// silently let a dowel break out of the other one.
+			if pegGrid != nil {
+				if far := axialClearance(pegGrid, centre3, pegDir, socketR, u, v, eps); far < have {
+					have = far
+				}
+			}
 			if have < axialNeed {
 				out.Skipped = append(out.Skipped, SkippedPin{
 					X: centre3[0], Y: centre3[1], Z: centre3[2],
-					Reason:   "not enough material behind the face for the socket",
+					Reason:   axialReason,
 					Measured: have, Required: axialNeed,
 				})
 				continue
 			}
 
-			pegHoles[gi] = append(pegHoles[gi], circleLoop(p, r, pinSegments, origin, u, v))
+			pegHoles[gi] = append(pegHoles[gi], circleLoop(p, pegR, pinSegments, origin, u, v))
 			socketHoles[gi] = append(socketHoles[gi], circleLoop(p, socketR, pinSegments, origin, u, v))
 
 			// Each cylinder is closed at its far end by pinCylinder's own disc and
 			// at the face by the hole it stands in, so neither needs a further cap.
-			pegTris = append(pegTris, pinCylinder(centre3, pegDir, pu, pv, r, ps.Length, pinSegments, false)...)
-			socketTris = append(socketTris, pinCylinder(centre3, pegDir, pu, pv, socketR, socketDepth, pinSegments, true)...)
+			pegTris = append(pegTris, pinCylinder(centre3, pegDir, pu, pv, pegR, pegLen, pinSegments, pegCavity)...)
+			socketTris = append(socketTris, pinCylinder(centre3, socketDir, su, sv, socketR, socketDepth, pinSegments, true)...)
 
 			out.Placed++
 		}

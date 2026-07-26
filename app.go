@@ -10,6 +10,7 @@ import (
 
 	"stl-cutter/internal/cut"
 	"stl-cutter/internal/geom"
+	"stl-cutter/internal/repair"
 	"stl-cutter/internal/stl"
 )
 
@@ -51,6 +52,25 @@ type TreeView struct {
 	Root       *Part  `json:"root"`
 	SelectedID string `json:"selectedId"`
 	CanUndo    bool   `json:"canUndo"`
+	// Repair is non-nil only on a load that asked for repair and found something
+	// to do. Cuts and undos leave it nil, so the message appears once, on the load
+	// that caused it.
+	Repair *RepairView `json:"repair,omitempty"`
+}
+
+// RepairView is what load-time repair did, for the sidebar to report.
+//
+// Before and After are the full verdicts as text rather than a "fixed" flag,
+// because repair closes holes and drops degenerate triangles but deliberately
+// does not correct winding — so a mesh can come back genuinely improved and still
+// not be a closed solid, and saying so is the whole point.
+type RepairView struct {
+	HolesFilled       int    `json:"holesFilled"`
+	TrianglesAdded    int    `json:"trianglesAdded"`
+	DegenerateRemoved int    `json:"degenerateRemoved"`
+	Before            string `json:"before"`
+	After             string `json:"after"`
+	Closed            bool   `json:"closed"`
 }
 
 // view snapshots the current tree for the frontend. Returns nil when nothing is
@@ -99,7 +119,11 @@ func clonePart(p *Part) *Part {
 }
 
 // OpenModel shows a native file dialog and loads the chosen STL.
-func (a *App) OpenModel() (*TreeView, error) {
+//
+// repair asks for load-time hole filling. It is a parameter rather than App state
+// so that what a load did is a property of that call, and two loads cannot
+// disagree about a mode set between them.
+func (a *App) OpenModel(repair bool) (*TreeView, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Open STL",
 		Filters: []runtime.FileFilter{
@@ -113,7 +137,7 @@ func (a *App) OpenModel() (*TreeView, error) {
 		// The user cancelled. Not an error; the frontend leaves things as they are.
 		return a.view(), nil
 	}
-	return a.loadPath(path)
+	return a.loadPath(path, repair)
 }
 
 // OpenPath loads an STL from a path, bypassing the native dialog.
@@ -124,21 +148,46 @@ func (a *App) OpenModel() (*TreeView, error) {
 // for an answer it cannot give. Everything past loading is identical, so this
 // one method is the difference between a headless browser reaching the cut
 // path and being stuck on an empty sidebar.
-func (a *App) OpenPath(path string) (*TreeView, error) {
-	return a.loadPath(path)
+func (a *App) OpenPath(path string, repair bool) (*TreeView, error) {
+	return a.loadPath(path, repair)
 }
 
 // loadPath is everything OpenModel does once a path is known, split out so it
 // can be tested without a dialog.
-func (a *App) loadPath(path string) (*TreeView, error) {
+//
+// Repair runs before the mesh reaches the session, so the tree records the
+// repaired geometry's measurements and watertightness rather than the file's. A
+// tree that still flagged a part the sidebar had just announced as repaired would
+// be the worst of both.
+func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 	mesh, err := stl.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+
+	var rv *RepairView
+	if doRepair {
+		res := repair.Repair(mesh, mesh.Epsilon())
+		if res.Changed() {
+			rv = &RepairView{
+				HolesFilled:       res.HolesFilled,
+				TrianglesAdded:    res.TrianglesAdded,
+				DegenerateRemoved: res.DegenerateRemoved,
+				Before:            res.Before.String(),
+				After:             res.After.String(),
+				Closed:            res.After.OK(),
+			}
+		}
+	}
+
 	if err := a.session.Load(filepath.Base(path), mesh); err != nil {
 		return nil, err
 	}
-	return a.view(), nil
+	v := a.view()
+	if v != nil {
+		v.Repair = rv
+	}
+	return v, nil
 }
 
 // PlaneInput is the gizmo's state as the frontend reports it. Arrays rather than
