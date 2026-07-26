@@ -131,6 +131,19 @@ being inverted would fill every hollow model solid. Two real bodies in one file 
 both real. Only a surface whose signed volume cancels to nothing goes, and removing
 one cannot change what prints — the volume above is unchanged to the last digit.
 
+**What it buys you**, measured on that 492k-triangle file: the same plane, the same
+cut, the checkbox the only difference.
+
+| | repair off | repair on |
+|---|---|---|
+| on load | not a closed solid | closed solid |
+| after the cut | both pieces open, 4 and 2 edges | **both pieces closed solids** |
+| piece volumes | 613424 + 537185 mm³ | 613424 + 537185 mm³ |
+
+The volumes are identical to the digit. Repair changed nothing about the geometry
+that matters and turned two unprintable pieces into two printable ones, because the
+debris it removed was sitting on the cut path.
+
 Two faults it does **not** fix, and says so rather than implying otherwise:
 
 - **Two solid bodies touching along an edge.** Both enclose volume, so neither is

@@ -77,10 +77,12 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 
 ## Long cuts
 
-- [ ] Open a model with hundreds of thousands of triangles and cut it. A progress
-      bar appears and advances; the window stays responsive.
-      *(Needs a model far larger than any fixture. Cutting costs about 5µs per
-      triangle, so aim for something that takes over a second.)*
+- [x] **Done once, by hand**, on a real 492k-triangle model: the cut took 6.5s, the
+      window stayed responsive, and the progress bar was hidden again afterwards.
+      Not automated — no fixture is that large.
+- [ ] Repeat with a million triangles or more, and watch that the bar actually
+      advances rather than only appearing and vanishing. *(Cutting costs about 5µs
+      per triangle.)*
 
 ## Alignment pins
 
@@ -127,8 +129,13 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Load `touchingcubes.stl` with it ticked. Both bodies enclose
       volume so neither is debris; the message names the defect and says repairing
       again will not help, rather than reporting "filled 0 holes" and stopping.
-- [ ] Load a real broken download with it ticked, export the result, and open it in
-      a slicer. *(No fixture stands in for every way real exporters break meshes.
+- [x] **Done once, by hand, on a real 24MB 492k-triangle file** (not automated —
+      the file is the user's, not a fixture): ticked, it dropped 7 stray shells,
+      reported `Closed: yes`, and the same cut then gave two closed solids where
+      unticked it gave two open ones — 4 and 2 edges — at identical volumes. Load
+      took 12.6s, the cut 6.5s.
+- [ ] Repeat on a download from elsewhere, export, and open it in a slicer. *(No
+      fixture stands in for every way real exporters break meshes.
       `go run ./cmd/meshrepair -in model.stl` gives the verdict without the GUI,
       which is the practical route for a file of tens of megabytes.)*
 - [ ] Load a model whose only fault is backwards-facing triangles. The message says
