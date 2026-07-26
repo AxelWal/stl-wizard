@@ -196,3 +196,62 @@ func TestRayGridResultIsIndependentOfDirectionScale(t *testing.T) {
 		t.Errorf("distance = %v, want 5", unit)
 	}
 }
+
+// A hit whose barycentric coordinate is a rounding error outside the triangle must still
+// count, because the triangle on the other side of that edge can round outward too and then
+// the surface is porous: the ray passes through solid material and reports nothing.
+//
+// That is not hypothetical. A cube's top face is split along its diagonal, and
+// axialClearance samples its footprint at 45 degrees, landing exactly on that diagonal.
+// On amd64 both triangles compute the barycentric as exactly zero and both accept. On
+// arm64 the compiler fuses the multiply-adds, the value lands an ulp either side of zero,
+// both triangles reject, and a 10mm cube reports no material above the floor at all —
+// TestAxialClearanceIgnoresTheFaceItStartsOn and TestApplyPinsRespectsThePegSide failed on
+// macos-arm64 for exactly this reason while passing on both amd64 runners.
+func TestRayTriangleAcceptsAHitARoundingErrorOutsideAnEdge(t *testing.T) {
+	tri := stl.Tri{
+		A: geom.Vec3{0, 0, 0},
+		B: geom.Vec3{1, 0, 0},
+		C: geom.Vec3{0, 1, 0},
+	}
+	dir := geom.Vec3{0, 0, 1}
+
+	for _, c := range []struct {
+		name   string
+		origin geom.Vec3
+	}{
+		{"just outside the A-B edge", geom.Vec3{0.5, -1e-13, -1}},
+		{"just outside the A-C edge", geom.Vec3{-1e-13, 0.5, -1}},
+		{"just outside the hypotenuse", geom.Vec3{0.5 + 5e-14, 0.5 + 5e-14, -1}},
+	} {
+		dist, ok := rayTriangle(c.origin, dir, tri)
+		if !ok {
+			t.Errorf("%s: reported a miss; two triangles sharing that edge can both round outward and lose the hit", c.name)
+			continue
+		}
+		if math.Abs(dist-1) > 1e-9 {
+			t.Errorf("%s: distance %v, want 1", c.name, dist)
+		}
+	}
+}
+
+// The tolerance must not turn a real miss into a hit. A ray well clear of the triangle
+// stays a miss.
+func TestRayTriangleStillMissesWhatItMisses(t *testing.T) {
+	tri := stl.Tri{
+		A: geom.Vec3{0, 0, 0},
+		B: geom.Vec3{1, 0, 0},
+		C: geom.Vec3{0, 1, 0},
+	}
+	dir := geom.Vec3{0, 0, 1}
+	for _, origin := range []geom.Vec3{
+		{0.5, -1e-6, -1},
+		{-1e-6, 0.5, -1},
+		{0.5 + 1e-6, 0.5 + 1e-6, -1},
+		{2, 2, -1},
+	} {
+		if _, ok := rayTriangle(origin, dir, tri); ok {
+			t.Errorf("origin %v: reported a hit on a triangle it misses", origin)
+		}
+	}
+}

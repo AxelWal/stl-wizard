@@ -23,9 +23,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26"
 
@@ -54,7 +54,7 @@ jobs:
       - name: Build
         run: wails build -tags "${{ matrix.os == 'ubuntu-latest' && env.WAILS_WEBKIT_TAG || matrix.tags }}" -o stl-cutter-${{ matrix.name }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: stl-cutter-${{ matrix.name }}
           path: build/bin/*

@@ -11,6 +11,21 @@ import (
 // t, using the Möller–Trumbore test. Hits behind the origin do not count; a hit
 // exactly at the origin does, because the wall check needs to notice a surface
 // it is already touching.
+// baryEps is how far outside a triangle a hit may fall and still count.
+//
+// Barycentric coordinates are dimensionless and run 0..1, so this needs no scaling to the
+// model, and 1e-9 of one is a fraction of a nanometre on any real part.
+//
+// It is not cosmetic. Two triangles sharing an edge both put a hit on that edge at exactly
+// a coordinate boundary, and the tests here are `< 0` and `> 1`, so a hit that lands exactly
+// on the boundary is accepted by both — but one rounded an ulp outward is rejected by both,
+// and the surface is porous: the ray passes through solid material and reports nothing.
+// Whether it rounds outward depends on the platform, because arm64 may fuse a multiply-add
+// where amd64 may not. A cube's top face is split along its diagonal and axialClearance
+// samples its footprint at 45 degrees, landing exactly on it, so this cost two pin tests on
+// macos-arm64 while both amd64 runners stayed green.
+const baryEps = 1e-9
+
 func rayTriangle(origin, dir geom.Vec3, t stl.Tri) (float64, bool) {
 	const eps = 1e-12
 
@@ -25,13 +40,13 @@ func rayTriangle(origin, dir geom.Vec3, t stl.Tri) (float64, bool) {
 	f := 1 / a
 	s := origin.Sub(t.A)
 	u := f * s.Dot(h)
-	if u < 0 || u > 1 {
+	if u < -baryEps || u > 1+baryEps {
 		return 0, false
 	}
 
 	q := s.Cross(e1)
 	v := f * dir.Dot(q)
-	if v < 0 || u+v > 1 {
+	if v < -baryEps || u+v > 1+baryEps {
 		return 0, false
 	}
 

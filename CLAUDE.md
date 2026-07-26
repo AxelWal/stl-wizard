@@ -346,6 +346,22 @@ with its edge count and the volume it moved; a gap repair cannot close leaves th
 flagged as before. If you go after the root cause, the shortest repro is a 300mm cube
 auto-split onto a 200mm bed with 4 pins: 7 cuts, 2 pieces open by 3 edges each.
 
+**arm64 rounds differently, and the CI matrix is where you find out.** `rayTriangle`
+tested its barycentric coordinates against exact bounds, which accepts a hit on the edge
+two triangles share only because a value landing *exactly* on the boundary passes `< 0`
+and `> 1`. Rounded an ulp outward it is rejected by both and the surface is porous — the
+ray passes through solid material and reports nothing. Go fuses multiply-adds on arm64 and
+not on amd64, so `TestAxialClearanceIgnoresTheFaceItStartsOn` and
+`TestApplyPinsRespectsThePegSide` failed on macos-arm64 with both amd64 runners green: a
+cube's top face splits along its diagonal and `axialClearance` samples its footprint at 45
+degrees, landing exactly on it. `baryEps` in `raycast.go` is the fix.
+
+Three attempts to reproduce it on amd64 all failed — fusing `rayTriangle`'s multiply-adds
+by hand, fusing the sample point too, and jittering the sample by an ulp each way. **Do not
+trust an amd64-only mutation run for anything that compares a float against a boundary.**
+The proof was `gh workflow run build.yml --ref <branch>` with `baryEps` set to 0, which
+brought both failures back verbatim, line numbers included.
+
 `PinSpec.Count` is a **target, not a demand** (`internal/cut/pins.go:17`):
 placement grids the face and stops when it runs out of room, and a pin it never
 found a candidate for produces no `SkippedPin` to explain itself. The sidebar
