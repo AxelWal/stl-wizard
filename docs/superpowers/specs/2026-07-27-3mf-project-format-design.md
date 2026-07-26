@@ -130,3 +130,58 @@ the whole point of the change and a Go test cannot see it.
   different keys. The reference-export command is recorded above so it can be regenerated.
 - **`printable_area` for a non-rectangular bed** is a polygon; every printer in the app's
   list is rectangular, so four corners suffice. Note it, do not generalise it.
+
+---
+
+## Outcome
+
+**Phase 1 is implemented.** `Metadata/project_settings.config` is written with the bed the
+user selected, so the slicer stops substituting its own 200x200x100; `threemf.Write` refuses
+a bed that is not positive rather than writing a project without one. `Plate.Filament` says
+which filament prints a part and becomes the object's `extruder`, against a zero-based
+`Project.Filaments` table. Tested with three filaments and a 350x320 bed so neither
+off-by-one nor a swapped axis can pass by symmetry — the first version of the bed test used
+a square bed and did not notice X and Y exchanged.
+
+**Phase 2 is deliberately still not implemented, and the references did not unlock it.**
+Both suggested sources were checked. `radagast.ca/linux/3mf-file-format.html` shows a FreeCAD
+cube and a sliced Bambu file's *file list* and documents neither `model_settings.config`'s
+structure nor `paint_color`. DeepWiki's OrcaSlicer 3MF page names `MM_PAINTING_VERSION` and
+the `id`/`objectid` attributes but gives no encoding for the attribute value and does not say
+how plates bind to instances. The encoding is still only in `bbs_3mf.cpp` and
+`TriangleSelector`'s serialisation.
+
+That is not the reason to leave it, though. **The application has no way to express a painted
+triangle.** It cuts a model into parts; a part is the unit a user names, selects, exports and
+would assign a colour to. Per-part colour is that, and it is done. A `paint_color` writer
+with no painting UI would be unused code that can only rot, and a malformed value makes the
+importer reject the file rather than ignore the attribute. Build it when there is something
+to paint with.
+
+### The plate assignment: five causes ruled out, still unexplained
+
+`scripts/verify-3mf.sh` reports "4 plate(s) but 1 object assignment(s)". Established: our
+file declares four plates each holding exactly one object, Bambu imports all four objects and
+preserves their transforms to the millimetre, and only plate 1 ends up owning anything. It is
+not caused by `project_settings.config` — a file without it fails identically.
+
+Ruled out by experiment, each reverted:
+
+1. A missing `identify_id` on `<model_instance>`.
+2. Bambu's object/part id numbering (objects 2,4,6,8; parts 1,3,5,7) against our reuse of one
+   id for both — which also rules out the import-time id remapping.
+3. A plate stride of bed x 1.2, from `LOGICAL_PART_PLATE_GAP = 1./5.` in `PartPlate.cpp`,
+   against our bed + 40.
+4. Comparing against a control written in Bambu's own format: **not possible here.** A
+   two-plate file built by duplicating their own single-plate export makes the CLI die with
+   SIGSEGV, both with a part id that names nothing and with one that names the real mesh
+   object. The CLI crashes on a slightly-off project rather than reporting anything, so it
+   cannot be used to validate a hand-built control.
+5. The GUI, which is where this would be settled, will not start in this sandbox: `Invalid
+   OpenGL version 3.4, Failed to create GLFW window`.
+
+The likeliest remaining explanation is that the CLI does not honour plate assignment on
+import at all and the GUI does — which would make the original CLAUDE.md note true as well,
+since it was probably written from the GUI. `docs/manual-verification.md` has the step, with
+what to conclude either way. Until then the plate assertion is unproven, not a known bug in
+our writer.

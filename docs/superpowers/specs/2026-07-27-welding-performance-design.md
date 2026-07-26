@@ -163,3 +163,46 @@ The browser side. A rough measurement put fetching 24.6MB from `/part/{id}.stl` 
 2.6 s, but it was inconsistent with the total for the same load and the handler looks
 sound — buffered, and `stl.Write` is 47 ms. That needs measuring properly before anything
 is claimed about it, and it is its own piece of work.
+
+---
+
+## Outcome
+
+All three parts implemented. Measured on the same 492,032-triangle export:
+
+| Stage | Before | After | |
+| --- | --- | --- | --- |
+| `meshcheck.Check` | 2.49 s | **0.41 s** | 6.1x |
+| `shells.Surfaces` | 2.67 s | **0.92 s** | 2.9x |
+| `cut.Split` | 2.86 s | **0.73 s** | 3.9x |
+| `Welder.ID` per point | 832 ns | **344 ns** | 2.4x |
+
+**A** — cells of `2*eps` cover the ball in eight lookups, plus an exact-bits fast path for
+the 83% of vertices that repeat. Met its target (`Check` under 0.9 s).
+
+**B** — the count found what reasoning had missed: `ExecutePlan` rebuilds the tree from the
+mesh as loaded, so every execute re-checked the whole original model, about a second on this
+file. The verdict is carried now. `RefreshLeaves` re-measures only the meshes named.
+
+**C** — `geom.WeldAll` groups by exact bits in parallel and runs the eps probe serially over
+the distinct points; `meshcheck` shards its edge tally; `shells` uses the batch weld;
+`orient.Best` scores candidates in parallel; `cut.Split` chunks all three of its
+per-triangle passes.
+
+**`Check` did not reach the 0.25 s this spec hoped for.** It is at 0.41 s. What remains is
+the serial eps pass over the distinct points and the shard scan over the edge records. A
+flat open-addressing table — the idea this spec deliberately deferred — is the next thing to
+try, and `matchH2` is still 38% of the profile, so there is room.
+
+### Two lessons worth keeping
+
+**A determinism test that never runs the parallel path proves nothing.** `chunksFor` keeps
+meshes under 4096 triangles on one goroutine, and the first version of
+`TestSplitIsIdenticalHoweverTheWorkIsShared` used fixtures smaller than that, so chunks
+deliberately joined in reverse order passed it. It asserts the fixture is big enough now.
+
+**Making code fast broke a test that assumed it was slow.** The e2e test for the progress
+bar polled for a visible bar; a sphere now cuts inside one animation frame. It watches the
+`cut:progress` event instead. And inside `Split`, a fixed report period of 4096 never came
+round within a chunk once the work was shared sixteen ways — an existing test caught that
+one.
