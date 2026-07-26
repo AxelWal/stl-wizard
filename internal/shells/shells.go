@@ -69,11 +69,18 @@ func Surfaces(m *stl.Mesh, eps float64) []*stl.Mesh {
 
 // label assigns every triangle the id of the surface it belongs to.
 func label(m *stl.Mesh, eps float64) []int {
-	w := geom.NewWelder(eps)
+	// One batch weld rather than a call per corner, so the exact-match pass can use the
+	// cores. Identical result to welding them in order; see geom.WeldAll.
+	corners := make([]geom.Vec3, 0, len(m.Tris)*3)
+	for _, t := range m.Tris {
+		corners = append(corners, t.A, t.B, t.C)
+	}
+	welded, _ := geom.WeldAll(corners, eps)
+
 	type edge struct{ a, b int }
 	shared := make(map[edge][]int, len(m.Tris)*3)
-	for i, t := range m.Tris {
-		id := [3]int{w.ID(t.A), w.ID(t.B), w.ID(t.C)}
+	for i := range m.Tris {
+		id := [3]int{welded[i*3], welded[i*3+1], welded[i*3+2]}
 		for k := 0; k < 3; k++ {
 			a, b := id[k], id[(k+1)%3]
 			if a > b {

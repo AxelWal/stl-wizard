@@ -1,6 +1,9 @@
 package geom
 
-import "testing"
+import (
+	"math/rand"
+	"testing"
+)
 
 func TestWelderReusesIndexForNearCoincidentPoints(t *testing.T) {
 	w := NewWelder(1e-6)
@@ -148,4 +151,59 @@ func BenchmarkWelderID(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(len(pts)), "points")
+}
+
+// WeldAll must agree with the serial Welder exactly — the same ids in the same numbering
+// and the same canonical points in the same order. Anything less and welded output changes
+// with the number of cores the machine has, which would show up as a 3MF whose vertex
+// order moves between runs.
+//
+// A differential test against the implementation it replaces is the strongest check
+// available here: it covers every case the serial one handles without enumerating them.
+func TestWeldAllAgreesWithTheSerialWelder(t *testing.T) {
+	const eps = 1e-4
+	rng := rand.New(rand.NewSource(7))
+
+	for _, n := range []int{0, 1, 2, 17, 1000, 40000} {
+		// A mix of the three cases that matter: exact repeats, points within eps of one
+		// already placed, and points comfortably apart.
+		pts := make([]Vec3, 0, n)
+		for len(pts) < n {
+			roll := rng.Intn(3)
+			if roll == 0 && len(pts) > 0 {
+				pts = append(pts, pts[rng.Intn(len(pts))]) // exact repeat
+			} else if roll == 1 && len(pts) > 0 {
+				near := pts[rng.Intn(len(pts))]
+				pts = append(pts, Vec3{near[0] + eps/4, near[1] - eps/4, near[2] + eps/8})
+			} else {
+				pts = append(pts, Vec3{rng.Float64() * 10, rng.Float64() * 10, rng.Float64() * 10})
+			}
+		}
+
+		w := NewWelder(eps)
+		wantIDs := make([]int, len(pts))
+		for i, p := range pts {
+			wantIDs[i] = w.ID(p)
+		}
+		wantPts := w.Points()
+
+		gotIDs, gotPts := WeldAll(pts, eps)
+
+		if len(gotIDs) != len(wantIDs) {
+			t.Fatalf("n=%d: got %d ids, want %d", n, len(gotIDs), len(wantIDs))
+		}
+		for i := range wantIDs {
+			if gotIDs[i] != wantIDs[i] {
+				t.Fatalf("n=%d: point %d got id %d, serial welder gave %d", n, i, gotIDs[i], wantIDs[i])
+			}
+		}
+		if len(gotPts) != len(wantPts) {
+			t.Fatalf("n=%d: got %d canonical points, want %d", n, len(gotPts), len(wantPts))
+		}
+		for i := range wantPts {
+			if gotPts[i] != wantPts[i] {
+				t.Fatalf("n=%d: canonical point %d is %v, serial welder gave %v", n, i, gotPts[i], wantPts[i])
+			}
+		}
+	}
 }

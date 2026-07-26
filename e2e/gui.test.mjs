@@ -382,15 +382,28 @@ test("a cut turns the spinner into a bar", async (app) => {
   const before = await app.page.evaluate(() => document.getElementById("progress").hidden);
   expect.equal(before, true, "no bar before anything reports progress");
 
-  const running = app.page.evaluate(() => document.getElementById("do-execute").click());
-  const sawBar = await app.page
-    .waitForFunction(() => !document.getElementById("progress").hidden, null, { timeout: 15000 })
-    .then(() => true)
-    .catch(() => false);
-  await running;
+  // Watch the event rather than the rendered frame. A cut of this size now finishes
+  // inside a single animation frame, so polling for a visible bar caught nothing even
+  // though the bar was shown and hidden correctly — the assertion was really "the cut is
+  // slow", which is not the contract. The contract is that a progress report makes the
+  // bar visible, so ask exactly that: at each cut:progress, was the bar up?
+  //
+  // The read is deferred to a microtask so it happens after every listener for that
+  // event has run, ui.js's included, whichever order they were registered in.
+  await app.page.evaluate(() => {
+    window.__barUpOnProgress = false;
+    window.runtime.EventsOn("cut:progress", () => {
+      queueMicrotask(() => {
+        if (!document.getElementById("progress").hidden) window.__barUpOnProgress = true;
+      });
+    });
+  });
+
+  await app.page.evaluate(() => document.getElementById("do-execute").click());
   await app.page.waitForFunction(() => document.getElementById("busy").hidden, null, { timeout: 30000 });
 
-  expect.ok(sawBar, "the bar appeared once the cut reported progress");
+  const sawBar = await app.page.evaluate(() => window.__barUpOnProgress);
+  expect.ok(sawBar, "the bar was up while the cut reported progress");
   expect.equal(await app.hidden("#busy"), true, "and everything cleared at the end");
 });
 

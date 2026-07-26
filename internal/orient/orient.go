@@ -5,6 +5,7 @@ package orient
 import (
 	"math"
 	"sort"
+	"sync"
 
 	"stl-wizard/internal/geom"
 	"stl-wizard/internal/stl"
@@ -111,12 +112,27 @@ func Best(m *stl.Mesh, s Spec) Result {
 		d              geom.Vec3
 		overhang, base float64
 	}
+	// Every candidate is scored against the same immutable data, so they go in parallel.
+	// The winner is then picked in candidate order, which keeps the result independent of
+	// which goroutine happened to finish first — a tie must always resolve the same way.
+	scores := make([]scoreT, len(cands))
+	var wg sync.WaitGroup
+	for i, d := range cands {
+		wg.Add(1)
+		go func(i int, d geom.Vec3) {
+			defer wg.Done()
+			o, b, _ := score(tris, scored, d, cosLimit)
+			scores[i] = scoreT{d: d, overhang: o, base: b}
+		}(i, d)
+	}
+	wg.Wait()
+
 	best := scoreT{}
 	haveBest := false
-	for _, d := range cands {
-		o, b, _ := score(tris, scored, d, cosLimit)
+	for _, s := range scores {
+		o, b := s.overhang, s.base
 		if !haveBest || better(o, b, best.overhang, best.base) {
-			best = scoreT{d: d, overhang: o, base: b}
+			best = s
 			haveBest = true
 		}
 	}
