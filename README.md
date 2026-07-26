@@ -41,6 +41,7 @@ The geometry library is usable without the window:
     go run ./cmd/genfixture -name u -out testdata/u.stl
     go run ./cmd/cutdemo -in testdata/u.stl -out /tmp/u \
         -origin 7.5,25,5 -normal 0,1,0 -width 15 -height 20
+    go run ./cmd/meshrepair -in model.stl
 
 Exits non-zero if either resulting part is not a closed solid.
 
@@ -52,7 +53,9 @@ Exits non-zero if either resulting part is not a closed solid.
     internal/geom        vectors and point welding
     internal/meshcheck   watertightness invariants
     internal/fixtures    procedurally generated test meshes
+    internal/repair      closing holes in a broken mesh
     cmd/cutdemo          cut a file from the command line
+    cmd/meshrepair       report on and repair a file from the command line
     cmd/genfixture       write a fixture to a file
     frontend/            the window: three.js viewer and the plane gizmo
 
@@ -110,10 +113,24 @@ exactly one triangle and becomes a shared edge — closed by construction rather
 than by hope. A rim that is not flat gets a geometrically approximate fill, but it
 does get closed.
 
-**It does not turn backwards-facing triangles around.** That needs a consistent
-orientation propagated across the whole surface, which is a different job. A mesh
-whose only fault is winding comes back reported and otherwise untouched, and the
-sidebar says so rather than implying a clean bill of health.
+**It only fixes holes and zero-area triangles.** Two other defects report the same
+way through `meshcheck` and are not the same problem:
+
+- **More than two triangles meeting along one edge** — two surfaces touching, or a
+  self-intersection. Filling does nothing for it. This turns out to be what real
+  files actually have: two parts exported from this application, of 492k and 1.75M
+  triangles, had 6 and 16 open edges and **not one of them was a hole**. The
+  sidebar names this case and says that repairing again will not help, because
+  "filled 0 holes" on its own reads as a repair that could not be bothered.
+- **Backwards-wound triangles.** Turning one around means propagating a consistent
+  orientation across the whole surface, which is a different algorithm.
+
+Either way the model comes back reported and otherwise untouched. `cmd/meshrepair`
+gives the same account from the command line, which is the practical way to check a
+large file:
+
+    go run ./cmd/meshrepair -in model.stl                 # just the verdict
+    go run ./cmd/meshrepair -in model.stl -out fixed.stl  # repair and write
 
 ## Known limitations
 
@@ -164,7 +181,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-45 tests over every GUI feature, pointer input included. See CLAUDE.md.
+47 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

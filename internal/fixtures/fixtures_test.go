@@ -116,6 +116,33 @@ func TestOpenBoxHasOneFlatFourEdgeHole(t *testing.T) {
 	}
 }
 
+// TouchingCubes reproduces the defect real exported models actually have.
+//
+// Two 24MB and 87MB parts exported from this application had 6 and 16 "open"
+// edges respectively, and not one of them was a hole: every one was traversed
+// four times, twice each way. That is two closed surfaces meeting along a shared
+// edge, and no amount of hole filling touches it. A fixture with holes cannot
+// stand in for it.
+func TestTouchingCubesHaveNonManifoldEdgesAndNoHoles(t *testing.T) {
+	m := TouchingCubes(10)
+	if got := len(m.Tris); got != 24 {
+		t.Fatalf("got %d triangles, want 24 (two cubes)", got)
+	}
+
+	rep := meshcheck.Check(m, m.Epsilon())
+	if rep.OpenEdges != 1 {
+		t.Errorf("OpenEdges = %d, want 1 (the single shared edge)", rep.OpenEdges)
+	}
+	if rep.Misoriented != 0 || rep.Degenerate != 0 {
+		t.Errorf("both cubes are wound correctly; got %s", rep)
+	}
+
+	// Volume is two whole cubes: they touch along an edge and overlap nowhere.
+	if got, want := m.Volume(), 2*Cube(10).Volume(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("volume = %v, want %v", got, want)
+	}
+}
+
 // translate returns a copy of m shifted by off.
 func translate(m *stl.Mesh, off geom.Vec3) *stl.Mesh {
 	out := &stl.Mesh{Tris: make([]stl.Tri, len(m.Tris))}

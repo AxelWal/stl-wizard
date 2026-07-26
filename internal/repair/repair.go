@@ -20,6 +20,21 @@ type Result struct {
 	HolesFilled       int
 	TrianglesAdded    int
 	DegenerateRemoved int
+
+	// BoundaryEdges and NonManifoldEdges split the open-edge count meshcheck
+	// reports, both measured before any work.
+	//
+	// An edge used once is a hole rim, and filling closes it. An edge used three
+	// or more times has more than two triangles meeting along it — two surfaces
+	// touching, a self-intersection — and filling does nothing whatever for it.
+	// Without the split a caller can only say "filled 0 holes", which reads as a
+	// repair that did not bother rather than a defect of a kind repair cannot
+	// address. Real exported models turn out to be almost entirely the second
+	// kind: two parts from this application, of 492k and 1.75M triangles, had 6
+	// and 16 open edges and not one of them was a hole.
+	BoundaryEdges    int
+	NonManifoldEdges int
+
 	// Before and After are the full verdicts either side of the work, so a caller
 	// can report an improvement honestly rather than asserting one.
 	Before, After meshcheck.Report
@@ -28,6 +43,13 @@ type Result struct {
 // Changed reports whether the mesh was actually modified.
 func (r Result) Changed() bool {
 	return r.HolesFilled > 0 || r.DegenerateRemoved > 0
+}
+
+// Unfixable reports that the mesh is still open and repair has nothing left to
+// try: every remaining open edge is non-manifold rather than a hole rim. The
+// caller should say so instead of implying the model merely needs another pass.
+func (r Result) Unfixable() bool {
+	return !r.After.OK() && r.After.OpenEdges > 0 && r.BoundaryEdges == 0 && r.NonManifoldEdges > 0
 }
 
 // Repair closes m's holes in place.
@@ -81,7 +103,24 @@ func Repair(m *stl.Mesh, eps float64) Result {
 	// the reverse of each edge comes out facing the same way as its neighbours.
 	next := make(map[int][]int)
 	var starts []int
+	counted := make(map[edge]bool, len(use))
 	for e, n := range use {
+		// Tally each undirected edge once, the way meshcheck does, so the two
+		// counts add up to its OpenEdges rather than double-counting.
+		key := e
+		if key.a > key.b {
+			key = edge{e.b, e.a}
+		}
+		if !counted[key] {
+			counted[key] = true
+			switch total := use[edge{key.a, key.b}] + use[edge{key.b, key.a}]; {
+			case total == 1:
+				res.BoundaryEdges++
+			case total > 2:
+				res.NonManifoldEdges++
+			}
+		}
+
 		if n != 1 || use[edge{e.b, e.a}] != 0 {
 			continue
 		}

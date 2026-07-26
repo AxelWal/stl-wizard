@@ -198,7 +198,33 @@ test("a plane off the model reports a readable error and changes nothing", async
   // which can land after the Cut promise has already rejected — so wait for it
   // rather than reading straight after the error message. Never hiding is the
   // real failure, and this still catches that.
-  await app.page.waitForFunction(() => document.getElementById("progress").hidden, null, { timeout: 5000 });
+  //
+  // The window is generous because the event's latency is not the thing under
+  // test: at 5s this failed about one full run in three, while passing every time
+  // in isolation, which is a flaky test rather than a discovered bug.
+  await app.page.waitForFunction(() => document.getElementById("progress").hidden, null, { timeout: 20000 });
+});
+
+// The progress bar must never be left on screen, and the error path is where it
+// used to happen: cut:start and cut:done leave Go microseconds apart there, and
+// the bridge delivered them reversed often enough that start ran last and the bar
+// stuck for good. Ten failed cuts in a row is what turned a one-run-in-four flake
+// into a repeatable failure.
+test("repeated failed cuts never leave the progress bar on screen", async (app) => {
+  await app.open("u");
+
+  for (let i = 0; i < 10; i++) {
+    await app.planeAcrossTheArms({ position: [500 + i, 500, 500], width: 15, height: 20 });
+    const msg = await app.cut();
+    expect.contains(msg, "nothing to cut", `attempt ${i + 1} to report the error`);
+    expect.equal(await app.hidden("#progress"), true, `the progress bar after attempt ${i + 1}`);
+  }
+
+  // And a real cut still works afterwards, so the bar was not simply nailed shut.
+  await app.planeAcrossTheArms(U_LEFT_ARM);
+  await app.cut();
+  expect.equal((await app.parts()).length, 2, "a genuine cut still succeeds");
+  expect.equal(await app.hidden("#progress"), true, "the progress bar after a successful cut");
 });
 
 group("parts and selection");
@@ -484,6 +510,25 @@ test("a repaired model can then be cut into closed pieces", async (app) => {
     expect.ok(p.closed, `${p.label} to be a closed solid`);
     expect.near(p.volume, 4000, 1, `${p.label} to be half the 8000mm³ box`);
   }
+});
+
+// The case real files actually hit. Two parts exported from this application, of
+// 492k and 1.75M triangles, had 6 and 16 open edges and not one was a hole: every
+// one was an edge with four triangles meeting along it. Repair filled nothing,
+// correctly — but said only "filled 0 holes", which reads as a repair that could
+// not be bothered rather than a defect of a kind filling cannot address.
+test("a non-manifold model is told repair cannot help, not left guessing", async (app) => {
+  await app.setRepairOnLoad(true);
+  await app.open("touchingcubes");
+
+  const msg = await app.messages();
+  expect.contains(msg, "more than two triangles", "the kind of defect named");
+  expect.contains(msg, "not a hole", "that it is not something filling addresses");
+  expect.contains(msg, "will not help", "that repeating the repair is pointless");
+
+  const [part] = await app.parts();
+  expect.ok(!part.closed, "the part to still report Closed: no");
+  expect.ok(part.flagged, "the part to still carry a ⚠");
 });
 
 test("repair claims nothing on a model that does not need it", async (app) => {

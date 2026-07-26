@@ -110,6 +110,69 @@ func TestRepairClosesEveryLoopSeparately(t *testing.T) {
 	}
 }
 
+// The failure that matters on real files.
+//
+// Two parts exported from this application, 24MB and 87MB, had 6 and 16 open
+// edges and not one was a hole: every one was traversed four times, twice each
+// way — two closed surfaces meeting along a shared edge. Repair filled nothing,
+// correctly, and said only "filled 0 holes", which leaves the user to guess why
+// their model is still flagged. Splitting the count is what makes that honest.
+func TestRepairDistinguishesNonManifoldEdgesFromHoles(t *testing.T) {
+	m := fixtures.TouchingCubes(10)
+	before := len(m.Tris)
+
+	res := Repair(m, m.Epsilon())
+
+	if res.NonManifoldEdges != 1 {
+		t.Errorf("NonManifoldEdges = %d, want 1", res.NonManifoldEdges)
+	}
+	if res.BoundaryEdges != 0 {
+		t.Errorf("BoundaryEdges = %d, want 0 — there is no rim here", res.BoundaryEdges)
+	}
+	if res.HolesFilled != 0 || res.TrianglesAdded != 0 {
+		t.Errorf("nothing is fillable, but %d hole(s) and %d triangle(s) were added",
+			res.HolesFilled, res.TrianglesAdded)
+	}
+	if len(m.Tris) != before {
+		t.Errorf("triangle count changed from %d to %d", before, len(m.Tris))
+	}
+	// The whole point: a caller can tell "could not help" from "nothing wrong".
+	if res.After.OK() {
+		t.Error("a non-manifold mesh must not be reported as sound")
+	}
+	if !res.Unfixable() {
+		t.Error("Unfixable should be true when every open edge is non-manifold")
+	}
+}
+
+// A mesh with both kinds must fill the rim and still report what it could not do.
+func TestRepairFillsHolesAndStillReportsNonManifoldEdges(t *testing.T) {
+	m := fixtures.TouchingCubes(10)
+	open := fixtures.OpenBox(10)
+	off := geom.Vec3{0, 0, 100}
+	for _, tr := range open.Tris {
+		m.Tris = append(m.Tris, stl.Tri{A: tr.A.Add(off), B: tr.B.Add(off), C: tr.C.Add(off)})
+	}
+
+	res := Repair(m, m.Epsilon())
+
+	if res.HolesFilled != 1 {
+		t.Errorf("HolesFilled = %d, want 1 — the open box still has a rim", res.HolesFilled)
+	}
+	if res.BoundaryEdges != 4 {
+		t.Errorf("BoundaryEdges = %d, want 4", res.BoundaryEdges)
+	}
+	if res.NonManifoldEdges != 1 {
+		t.Errorf("NonManifoldEdges = %d, want 1", res.NonManifoldEdges)
+	}
+	if res.After.OpenEdges != 1 {
+		t.Errorf("After.OpenEdges = %d, want the 1 non-manifold edge left", res.After.OpenEdges)
+	}
+	if res.Unfixable() {
+		t.Error("Unfixable should be false when a hole was actually filled")
+	}
+}
+
 // Winding is a different problem: flipping one triangle means propagating a
 // consistent orientation across the whole surface. Repair must report that
 // rather than claim a fix it has not made.

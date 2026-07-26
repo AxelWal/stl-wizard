@@ -191,6 +191,20 @@ func OpenBox(size float64) *stl.Mesh {
 	return m
 }
 
+// TouchingCubes is two closed cubes meeting along one vertical edge: the defect
+// real exported models actually have.
+//
+// Both cubes are sound. The shared edge is traversed four times — twice each way,
+// once per cube — which meshcheck counts as open because it is not shared by
+// exactly two triangles. It is not a hole, and hole filling does nothing for it,
+// which is precisely why internal/repair needs a fixture like this to report
+// against rather than only meshes with rims.
+func TouchingCubes(size float64) *stl.Mesh {
+	a := Cube(size)
+	b := Box(geom.Vec3{size, size, 0}, geom.Vec3{2 * size, 2 * size, size})
+	return &stl.Mesh{Tris: append(append([]stl.Tri(nil), a.Tris...), b.Tris...)}
+}
+
 func NonManifold() *stl.Mesh {
 	m := Cube(10)
 	m.Tris = m.Tris[:len(m.Tris)-1]

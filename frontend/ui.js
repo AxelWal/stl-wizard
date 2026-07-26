@@ -66,18 +66,25 @@ function busy(on) {
 
 // A cut on a large model runs for seconds. The library reports progress; show it
 // rather than leaving the window looking frozen.
-EventsOn("cut:start", () => {
-  progressEl.hidden = false;
-  progressBar.style.width = "0%";
-});
+//
+// Visibility belongs to the command that started the work, not to the cut:start
+// and cut:done events. Go emits those two in order, but on an error path they
+// leave microseconds apart and the bridge does not guarantee they are *delivered*
+// in that order: when they arrived reversed, cut:start ran last and left the bar
+// on screen for good, with nothing able to clear it. That failed about one run in
+// four of the e2e suite. Bracketing the awaited call cannot get the order wrong,
+// because there is only one order.
+//
+// cut:progress still drives the width — a message that arrives late or out of
+// order only moves the bar, which the next one corrects.
 EventsOn("cut:progress", (f) => {
   progressBar.style.width = `${Math.round(f * 100)}%`;
 });
-// Emitted from a defer in Go, so this always fires — including when Cut errors
-// or panics — and the bar can never be left on screen.
-EventsOn("cut:done", () => {
-  progressEl.hidden = true;
-});
+
+function progress(on) {
+  progressEl.hidden = !on;
+  if (on) progressBar.style.width = "0%";
+}
 
 async function render(tree) {
   currentTree = tree;
@@ -124,9 +131,26 @@ function reportRepair(tree) {
   if (r.degenerateRemoved) {
     did.push(`removed ${r.degenerateRemoved} zero-area triangle(s)`);
   }
-  message(`Repaired the mesh: ${did.join(", ")}.`, r.closed ? "ok" : "warn");
+  if (did.length) {
+    message(`Repaired the mesh: ${did.join(", ")}.`, r.closed ? "ok" : "warn");
+  } else {
+    message(`Nothing to repair — ${r.before}. See below.`, "warn");
+  }
 
-  if (!r.closed) {
+  if (r.closed) return;
+
+  // Naming the kind of defect is the difference between a user trying again and
+  // a user knowing not to. Real exported models are almost always the
+  // non-manifold case, which filling cannot touch.
+  if (r.nonManifoldEdges) {
+    message(
+      `${r.nonManifoldEdges} edge(s) have more than two triangles meeting along them — ` +
+        `two surfaces touching, not a hole. Filling cannot fix that, so repairing again ` +
+        `will not help. Most slicers still print such a model; a mesh tool can separate ` +
+        `the surfaces if yours refuses.`,
+      "warn"
+    );
+  } else {
     message(
       `It is still not a closed solid — ${r.after}. Repair closes holes and drops ` +
         `degenerate triangles, but it does not turn backwards-facing triangles around.`,
@@ -191,6 +215,7 @@ cutBtn.addEventListener("click", async () => {
   clearMessages();
   busy(true);
   const spec = pinSpec();
+  progress(true);
   try {
     const outcome = await Cut(currentTree.selectedId, planeInput(), spec);
     await render(outcome.tree);
@@ -208,6 +233,7 @@ cutBtn.addEventListener("click", async () => {
   } catch (err) {
     message(String(err), "err");
   } finally {
+    progress(false);
     busy(false);
   }
 });
@@ -247,6 +273,7 @@ document.getElementById("do-autosplit").addEventListener("click", async () => {
   if (!currentTree) return;
   clearMessages();
   busy(true);
+  progress(true);
   try {
     const out = await AutoSplit(bedSpec(), pinSpec());
     currentTree = out.tree;
@@ -264,6 +291,7 @@ document.getElementById("do-autosplit").addEventListener("click", async () => {
   } catch (err) {
     message(String(err), "err");
   } finally {
+    progress(false);
     busy(false);
   }
 });

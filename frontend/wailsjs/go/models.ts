@@ -76,6 +76,7 @@ export namespace main {
 	    before: string;
 	    after: string;
 	    closed: boolean;
+	    nonManifoldEdges: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RepairView(source);
@@ -89,6 +90,7 @@ export namespace main {
 	        this.before = source["before"];
 	        this.after = source["after"];
 	        this.closed = source["closed"];
+	        this.nonManifoldEdges = source["nonManifoldEdges"];
 	    }
 	}
 	export class Part {

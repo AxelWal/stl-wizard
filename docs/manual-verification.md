@@ -10,14 +10,15 @@ Lines marked **[auto]** are covered there and do not need doing by hand — fix
 the test instead if one of them regresses. Run the suite before any release
 build and after any change to `frontend/`.
 
-**The ten unmarked lines are what is left for a person**, each with the reason
+**The unmarked lines are what is left for a person**, each with the reason
 it cannot be automated: a native dialog the browser cannot answer, a slicer, or
 a model far larger than any fixture. Treat them as the outstanding work.
 
 The suite generates the fixtures it needs into `testdata/`. To make one by hand:
 
     go run ./cmd/genfixture -name u -out testdata/u.stl
-    # u, cube, sphere, tube, hollowbox, openbox (deliberately broken, for repair)
+    # u, cube, sphere, tube, hollowbox,
+    # openbox (a fillable hole), touchingcubes (non-manifold, not fillable)
 
 Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 
@@ -120,8 +121,14 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       of the cube the fixture came from.
 - [x] **[auto]** A repaired model then cuts into two closed halves — which is the
       entire point of the feature.
+- [x] **[auto]** Load `touchingcubes.stl` with it ticked. The message names the
+      defect — more than two triangles meeting along an edge — and says repairing
+      again will not help, rather than reporting "filled 0 holes" and stopping.
+      This is what real exported files actually turn out to have.
 - [ ] Load a real broken download with it ticked, export the result, and open it in
-      a slicer. *(No fixture stands in for the ways real exporters break meshes.)*
+      a slicer. *(No fixture stands in for every way real exporters break meshes.
+      `go run ./cmd/meshrepair -in model.stl` gives the verdict without the GUI,
+      which is the practical route for a file of tens of megabytes.)*
 - [ ] Load a model whose only fault is backwards-facing triangles. The message says
       it is still not a closed solid and names winding as the reason, rather than
       implying a clean bill of health.

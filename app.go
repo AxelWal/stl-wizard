@@ -71,6 +71,13 @@ type RepairView struct {
 	Before            string `json:"before"`
 	After             string `json:"after"`
 	Closed            bool   `json:"closed"`
+	// NonManifoldEdges is how many open edges had more than two triangles meeting
+	// along them — two surfaces touching rather than a hole. Filling does nothing
+	// for those, and real exported models turn out to be mostly this: two parts
+	// from this application had 6 and 16 open edges and not one was a hole. Without
+	// this the sidebar could only say "filled 0 holes", which reads as a repair
+	// that did not bother.
+	NonManifoldEdges int `json:"nonManifoldEdges"`
 }
 
 // view snapshots the current tree for the frontend. Returns nil when nothing is
@@ -168,7 +175,10 @@ func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 	var rv *RepairView
 	if doRepair {
 		res := repair.Repair(mesh, mesh.Epsilon())
-		if res.Changed() {
+		// Reported when repair did something, and also when it could not: a model
+		// whose every open edge is non-manifold has to be told it will not improve
+		// by trying again, rather than left with no message at all.
+		if res.Changed() || res.Unfixable() {
 			rv = &RepairView{
 				HolesFilled:       res.HolesFilled,
 				TrianglesAdded:    res.TrianglesAdded,
@@ -176,6 +186,7 @@ func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 				Before:            res.Before.String(),
 				After:             res.After.String(),
 				Closed:            res.After.OK(),
+				NonManifoldEdges:  res.NonManifoldEdges,
 			}
 		}
 	}

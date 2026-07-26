@@ -155,7 +155,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 45
+    node e2e/gui.test.mjs              # all 47
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -173,9 +173,11 @@ Three things the harness knows that are easy to get wrong:
 - **A left-drag at the viewport centre translates the plane, it does not orbit.**
   TransformControls sits on the plane's origin and latches the press. Use
   `app.emptySpot()` to orbit and `app.gizmoCentre()` to translate.
-- **`cut:done` arrives after the Cut promise settles.** It comes from a defer in
-  Go over the event channel, so reading `#progress` straight after an error
-  message catches it still visible. Wait for it.
+- **Do not drive UI state off `cut:start` / `cut:done` ordering.** Go emits them in
+  order, but on an error path they leave microseconds apart and the bridge
+  delivered them *reversed* about one run in four — `cut:start` ran last and left
+  the progress bar on screen for good. Visibility now brackets the awaited call in
+  `ui.js`; `cut:progress` only moves the width, where a stale message is harmless.
 
 The suite launches the system Chrome, because the globally installed
 playwright's bundled-browser revision does not match what is downloaded under
@@ -240,11 +242,23 @@ of the other one. `Diameter` means the user's stock, so the bore is
 `Diameter + 2 × Clearance`.
 
 **Repair** (`internal/repair`) fans each boundary loop from its centroid, so every
-boundary edge gains exactly one triangle and closure holds by construction. It
-does **not** fix winding, and `RepairView` carries the before/after verdicts as
-text so the sidebar can say a mesh improved without claiming it is sound. The
-`openbox` fixture is the thing to test it against; it is off by default because it
-rewrites the user's geometry.
+boundary edge gains exactly one triangle and closure holds by construction. Off by
+default, because it rewrites the user's geometry.
+
+`meshcheck.OpenEdges` lumps together two unrelated defects, and repair only
+addresses one. `Result.BoundaryEdges` counts edges used once — rims, which filling
+closes. `Result.NonManifoldEdges` counts edges used three or more times — two
+surfaces touching, which filling cannot touch at all. **Real files are almost
+entirely the second kind:** two parts exported from this application, 492k and
+1.75M triangles, had 6 and 16 open edges and not one was a hole. `Result.Unfixable()`
+is the "do not bother trying again" signal, and both the sidebar and
+`cmd/meshrepair` must say which kind it is — "filled 0 holes" alone reads as a
+repair that could not be bothered.
+
+Fixtures: `openbox` has a fillable rim, `touchingcubes` reproduces the
+non-manifold case exactly. Use `cmd/meshrepair` for anything large; pushing an
+87MB file through the browser to find out whether it is even broken is the slow
+way round.
 
 `docs/manual-verification.md` is what is left for a human: exported pins in a
 slicer, and a real model of a few hundred thousand triangles. Everything the
