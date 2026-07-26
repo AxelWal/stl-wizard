@@ -30,12 +30,17 @@ func build(name string) (*stl.Mesh, error) {
 	case "openbox":
 		// Deliberately broken: a cube missing its top face, for exercising repair.
 		return fixtures.OpenBox(20), nil
+	case "cubewithflap":
+		// Deliberately broken the way real cut output is: a sound cube with a
+		// zero-volume two-triangle flap fused to one edge.
+		return fixtures.CubeWithFlap(20), nil
 	case "touchingcubes":
 		// Deliberately broken the way real exports are: two sound cubes sharing one
 		// edge, which is non-manifold rather than holed, so repair cannot fix it.
 		return fixtures.TouchingCubes(20), nil
 	default:
-		return nil, fmt.Errorf("unknown fixture %q; want u, cube, sphere, tube, hollowbox, openbox or touchingcubes", name)
+		return nil, fmt.Errorf("unknown fixture %q; want u, cube, sphere, tube, hollowbox, "+
+			"openbox, touchingcubes or cubewithflap", name)
 	}
 }
 

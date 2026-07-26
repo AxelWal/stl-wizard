@@ -17,8 +17,8 @@ a model far larger than any fixture. Treat them as the outstanding work.
 The suite generates the fixtures it needs into `testdata/`. To make one by hand:
 
     go run ./cmd/genfixture -name u -out testdata/u.stl
-    # u, cube, sphere, tube, hollowbox,
-    # openbox (a fillable hole), touchingcubes (non-manifold, not fillable)
+    # u, cube, sphere, tube, hollowbox, openbox (a fillable hole),
+    # cubewithflap (zero-volume debris), touchingcubes (two real bodies, unfixable)
 
 Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 
@@ -121,10 +121,12 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
       of the cube the fixture came from.
 - [x] **[auto]** A repaired model then cuts into two closed halves — which is the
       entire point of the feature.
-- [x] **[auto]** Load `touchingcubes.stl` with it ticked. The message names the
-      defect — more than two triangles meeting along an edge — and says repairing
+- [x] **[auto]** Load `cubewithflap.stl` with it ticked. The stray zero-volume
+      shell is dropped, the cube comes back closed, and the volume is unchanged.
+      This is the defect real cut output actually has.
+- [x] **[auto]** Load `touchingcubes.stl` with it ticked. Both bodies enclose
+      volume so neither is debris; the message names the defect and says repairing
       again will not help, rather than reporting "filled 0 holes" and stopping.
-      This is what real exported files actually turn out to have.
 - [ ] Load a real broken download with it ticked, export the result, and open it in
       a slicer. *(No fixture stands in for every way real exporters break meshes.
       `go run ./cmd/meshrepair -in model.stl` gives the verdict without the GUI,

@@ -512,6 +512,26 @@ test("a repaired model can then be cut into closed pieces", async (app) => {
   }
 });
 
+// What actually repairs real cut output. Two exported parts had 7 and 14 shells of
+// exactly zero volume — two-triangle flaps, some 0.01mm across — each fused to a
+// real body along one edge. Dropping them took all 22 non-manifold edges with them
+// and left both files watertight, with the volume unchanged.
+test("a stray zero-volume shell is dropped and the model comes back sound", async (app) => {
+  await app.setRepairOnLoad(true);
+  await app.open("cubewithflap");
+
+  const msg = await app.messages();
+  expect.contains(msg, "stray shell", "the debris to be named");
+  expect.contains(msg, "no volume", "why it was safe to delete");
+
+  const [part] = await app.parts();
+  expect.ok(part.closed, `the cube to come back closed, sidebar says: ${msg}`);
+  expect.ok(!part.flagged, "no ⚠ once the debris is gone");
+  expect.equal(part.tris, 12, "the flap's 2 triangles removed, the cube's 12 kept");
+  // 20mm cube. Deleting something that encloses nothing cannot change the volume.
+  expect.near(part.volume, 8000, 1, "the volume to be untouched");
+});
+
 // The case real files actually hit. Two parts exported from this application, of
 // 492k and 1.75M triangles, had 6 and 16 open edges and not one was a hole: every
 // one was an edge with four triangles meeting along it. Repair filled nothing,

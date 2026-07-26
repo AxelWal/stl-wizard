@@ -155,7 +155,7 @@ the dev server running, and it drives the same page a user gets:
 
     wails dev -tags webkit2_41 &
     timeout 120 bash -c 'until curl -sf http://localhost:34115 >/dev/null; do sleep 2; done'
-    node e2e/gui.test.mjs              # all 47
+    node e2e/gui.test.mjs              # all 48
     node e2e/gui.test.mjs pointer      # one group, matched by substring
 
 `e2e/harness.mjs` holds the runner and the vocabulary — `app.open("u")`,
@@ -255,10 +255,17 @@ is the "do not bother trying again" signal, and both the sidebar and
 `cmd/meshrepair` must say which kind it is — "filled 0 holes" alone reads as a
 repair that could not be bothered.
 
-Fixtures: `openbox` has a fillable rim, `touchingcubes` reproduces the
-non-manifold case exactly. Use `cmd/meshrepair` for anything large; pushing an
-87MB file through the browser to find out whether it is even broken is the slow
-way round.
+`dropEmptyShells` is what actually repairs real files, and it runs **after** hole
+filling: a legitimately open shell has no enclosed volume until its holes close,
+and weighing it first deletes exactly the model repair exists to rescue. The rule
+is "encloses nothing" (|volume| <= eps × own area), never "is small" — a hollow
+model's inner void is a separate inside-out surface and dropping inverted surfaces
+would fill every hollow model solid.
+
+Fixtures: `openbox` a fillable rim, `cubewithflap` a fused zero-volume flap (what
+real cut output has), `touchingcubes` two real bodies sharing an edge (what repair
+cannot fix). Use `cmd/meshrepair` for anything large; pushing an 87MB file through
+the browser to find out whether it is even broken is the slow way round.
 
 `docs/manual-verification.md` is what is left for a human: exported pins in a
 slicer, and a real model of a few hundred thousand triangles. Everything the

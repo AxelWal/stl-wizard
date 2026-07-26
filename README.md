@@ -10,8 +10,9 @@ U-shaped model without touching the other.
   in both for a dowel of your own.
 - Fit-to-printer auto-splitting, which repeatedly cuts an oversized model
   down until every piece fits a given build volume.
-- Optional repair of holes in a model as it is loaded, so a slightly broken
-  download can be cut without every piece coming back flagged.
+- Optional repair as a model is loaded: closes holes and deletes the stray
+  zero-volume debris a cut leaves behind, so a slightly broken file can be cut
+  without every piece coming back flagged.
 
 ## Running
 
@@ -53,7 +54,7 @@ Exits non-zero if either resulting part is not a closed solid.
     internal/geom        vectors and point welding
     internal/meshcheck   watertightness invariants
     internal/fixtures    procedurally generated test meshes
-    internal/repair      closing holes in a broken mesh
+    internal/repair      closing holes and clearing debris
     cmd/cutdemo          cut a file from the command line
     cmd/meshrepair       report on and repair a file from the command line
     cmd/genfixture       write a fixture to a file
@@ -113,15 +114,27 @@ exactly one triangle and becomes a shared edge — closed by construction rather
 than by hope. A rim that is not flat gets a geometrically approximate fill, but it
 does get closed.
 
-**It only fixes holes and zero-area triangles.** Two other defects report the same
-way through `meshcheck` and are not the same problem:
+It also **deletes stray surfaces that enclose no volume**, and on real files that
+is the repair that matters. Two parts exported from this application, of 492k and
+1.75M triangles, reported 6 and 16 open edges and had **no holes at all**: every
+bad edge came from a two-triangle zero-volume flap fused to a real body — some
+0.01mm across — left behind by a cut. Dropping them took all 22 edges with them:
 
-- **More than two triangles meeting along one edge** — two surfaces touching, or a
-  self-intersection. Filling does nothing for it. This turns out to be what real
-  files actually have: two parts exported from this application, of 492k and 1.75M
-  triangles, had 6 and 16 open edges and **not one of them was a hole**. The
-  sidebar names this case and says that repairing again will not help, because
-  "filled 0 holes" on its own reads as a repair that could not be bothered.
+    before: not watertight: 6 open edges
+    repair: dropped 7 empty shell(s) totalling 14 triangle(s)
+    after:  watertight
+    volume: 1.15061e+06 -> 1.15061e+06 (+0)
+
+The rule is "encloses nothing", not "is small". A hollow model's internal void is a
+separate inside-out surface with a large negative volume, and deleting surfaces for
+being inverted would fill every hollow model solid. Two real bodies in one file are
+both real. Only a surface whose signed volume cancels to nothing goes, and removing
+one cannot change what prints — the volume above is unchanged to the last digit.
+
+Two faults it does **not** fix, and says so rather than implying otherwise:
+
+- **Two solid bodies touching along an edge.** Both enclose volume, so neither is
+  debris; separating them would mean moving the user's geometry.
 - **Backwards-wound triangles.** Turning one around means propagating a consistent
   orientation across the whole surface, which is a different algorithm.
 
@@ -181,7 +194,7 @@ server and needs it running:
     wails dev -tags webkit2_41 &
     node e2e/gui.test.mjs
 
-47 tests over every GUI feature, pointer input included. See CLAUDE.md.
+48 tests over every GUI feature, pointer input included. See CLAUDE.md.
 
 `go test ./...` also runs `frontend_test.go`, which is the only automated
 check on the frontend: it walks `frontend/` and verifies that every relative

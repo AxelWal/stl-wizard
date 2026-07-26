@@ -205,6 +205,26 @@ func TouchingCubes(size float64) *stl.Mesh {
 	return &stl.Mesh{Tris: append(append([]stl.Tri(nil), a.Tris...), b.Tris...)}
 }
 
+// CubeWithFlap is a sound cube with a two-triangle zero-volume flap fused to one
+// of its edges: the debris real cut output actually contains.
+//
+// The flap is two triangles back to back. Its own two free edges are each used
+// twice, so it is a closed shell in the edge-counting sense and encloses exactly
+// nothing. The edge it shares with the cube ends up used four times, which is what
+// meshcheck reports as open — and the reason the fix is to delete the flap rather
+// than to fill or separate anything.
+func CubeWithFlap(size float64) *stl.Mesh {
+	m := Cube(size)
+	// Along the cube's bottom-front edge, sticking out into -Y where there is no
+	// material, so the flap cannot be mistaken for part of the solid.
+	a := geom.Vec3{0, 0, 0}
+	b := geom.Vec3{size, 0, 0}
+	tip := geom.Vec3{size / 2, -size * 0.3, 0}
+	front := stl.Tri{A: a, B: b, C: tip}
+	m.Tris = append(m.Tris, front, front.Reversed())
+	return m
+}
+
 func NonManifold() *stl.Mesh {
 	m := Cube(10)
 	m.Tris = m.Tris[:len(m.Tris)-1]

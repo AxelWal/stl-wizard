@@ -173,6 +173,97 @@ func TestRepairFillsHolesAndStillReportsNonManifoldEdges(t *testing.T) {
 	}
 }
 
+// Dropping debris is what actually repairs real cut output. Two exported parts
+// had 7 and 11 zero-volume two-triangle shells fused to their real bodies, and
+// that fusion is what made 21 of their 22 edges non-manifold.
+func TestRepairDropsAZeroVolumeShell(t *testing.T) {
+	m := fixtures.CubeWithFlap(10)
+	want := fixtures.Cube(10).Volume()
+
+	res := Repair(m, m.Epsilon())
+
+	if res.ShellsDropped != 1 {
+		t.Errorf("ShellsDropped = %d, want 1", res.ShellsDropped)
+	}
+	if res.TrianglesRemoved != 2 {
+		t.Errorf("TrianglesRemoved = %d, want 2", res.TrianglesRemoved)
+	}
+	// Dropping the flap removes the non-manifold edge it caused, so the cube comes
+	// back sound. That is the whole point.
+	if !res.After.OK() {
+		t.Errorf("the cube should be closed once the flap is gone, got %s", res.After)
+	}
+	if len(m.Tris) != 12 {
+		t.Errorf("got %d triangles, want the cube's 12", len(m.Tris))
+	}
+	if got := m.Volume(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("volume = %v, want %v — a flap encloses nothing, so nothing should change", got, want)
+	}
+}
+
+// The rule is "encloses nothing", not "is small". A hollow model's internal void
+// is a separate inside-out shell with negative volume; deleting those would fill
+// every hollow model solid.
+func TestRepairKeepsAHollowModelsInnerVoid(t *testing.T) {
+	m := fixtures.HollowBox(geom.Vec3{20, 20, 20}, 2)
+	before := len(m.Tris)
+	want := m.Volume()
+
+	res := Repair(m, m.Epsilon())
+
+	if res.ShellsDropped != 0 {
+		t.Errorf("ShellsDropped = %d; the inner void is not debris", res.ShellsDropped)
+	}
+	if len(m.Tris) != before {
+		t.Errorf("triangle count changed from %d to %d", before, len(m.Tris))
+	}
+	if got := m.Volume(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("volume = %v, want %v — the void must survive", got, want)
+	}
+}
+
+// Two genuinely solid bodies in one file are both real. Neither is debris just
+// because there are two of them.
+func TestRepairKeepsEveryBodyThatEnclosesVolume(t *testing.T) {
+	m := fixtures.TouchingCubes(10)
+	before := len(m.Tris)
+
+	res := Repair(m, m.Epsilon())
+
+	if res.ShellsDropped != 0 {
+		t.Errorf("ShellsDropped = %d; both cubes enclose volume", res.ShellsDropped)
+	}
+	if len(m.Tris) != before {
+		t.Errorf("triangle count changed from %d to %d", before, len(m.Tris))
+	}
+	// Still non-manifold, still reported: this is the case repair cannot fix.
+	if res.After.OK() {
+		t.Error("two cubes sharing an edge are still not a closed manifold")
+	}
+	if !res.Unfixable() {
+		t.Error("Unfixable should still be true when the touching shells are both real")
+	}
+}
+
+// Holes are filled before shells are weighed, so a legitimately open shell becomes
+// a solid with volume and is kept. Weighing first would delete it for enclosing
+// nothing yet — destroying exactly the model repair exists to rescue.
+func TestRepairFillsBeforeItWeighs(t *testing.T) {
+	m := fixtures.OpenBox(10)
+
+	res := Repair(m, m.Epsilon())
+
+	if res.ShellsDropped != 0 {
+		t.Errorf("ShellsDropped = %d; the open box is the model, not debris", res.ShellsDropped)
+	}
+	if !res.After.OK() {
+		t.Errorf("the box should be closed, got %s", res.After)
+	}
+	if got, want := m.Volume(), fixtures.Cube(10).Volume(); math.Abs(got-want) > 1e-6 {
+		t.Errorf("volume = %v, want %v", got, want)
+	}
+}
+
 // Winding is a different problem: flipping one triangle means propagating a
 // consistent orientation across the whole surface. Repair must report that
 // rather than claim a fix it has not made.

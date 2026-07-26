@@ -1,15 +1,26 @@
 // Package repair closes holes in a mesh so a slightly broken model can be cut
 // without every piece coming back flagged.
 //
-// It fixes what can be fixed locally and reports the rest. Specifically it fills
-// holes and drops degenerate triangles; it does not correct winding, because
-// flipping one backwards triangle means propagating a consistent orientation
-// across the whole connected surface, which is a different algorithm with its own
-// failure modes. A mesh whose only defect is winding comes back reported and
-// otherwise unchanged rather than silently mangled.
+// It fixes what can be fixed and reports the rest. It fills holes, drops
+// degenerate triangles, and deletes stray surfaces that enclose no volume.
+//
+// That last one is what repairs real files. Two parts exported from this
+// application, of 492k and 1.75M triangles, reported 6 and 16 open edges and had
+// no holes at all: every bad edge came from a two-triangle zero-volume flap fused
+// to a real body, some 0.01mm across, left behind by a cut. Dropping those took
+// every one of the 22 edges with them and left both files watertight with their
+// volume unchanged.
+//
+// It does not correct winding. Flipping one backwards triangle means propagating a
+// consistent orientation across the whole connected surface, which is a different
+// algorithm with its own failure modes. Nor does it separate two genuinely solid
+// bodies that touch along an edge. A mesh with either fault comes back reported
+// and otherwise unchanged rather than silently mangled.
 package repair
 
 import (
+	"math"
+
 	"stl-cutter/internal/geom"
 	"stl-cutter/internal/meshcheck"
 	"stl-cutter/internal/stl"
@@ -20,6 +31,15 @@ type Result struct {
 	HolesFilled       int
 	TrianglesAdded    int
 	DegenerateRemoved int
+
+	// ShellsDropped and TrianglesRemoved count connected surfaces deleted for
+	// enclosing nothing — cut debris. Two parts exported from this application had
+	// 7 and 11 two-triangle shells of exactly zero volume, some 0.01mm across, each
+	// fused to a real body along one edge; that fusion is what made 21 of their 22
+	// edges non-manifold. Deleting such a shell removes nothing that prints and
+	// takes the bad edge with it.
+	ShellsDropped    int
+	TrianglesRemoved int
 
 	// BoundaryEdges and NonManifoldEdges split the open-edge count meshcheck
 	// reports, both measured before any work.
@@ -42,7 +62,7 @@ type Result struct {
 
 // Changed reports whether the mesh was actually modified.
 func (r Result) Changed() bool {
-	return r.HolesFilled > 0 || r.DegenerateRemoved > 0
+	return r.HolesFilled > 0 || r.DegenerateRemoved > 0 || r.ShellsDropped > 0
 }
 
 // Unfixable reports that the mesh is still open and repair has nothing left to
@@ -129,11 +149,9 @@ func Repair(m *stl.Mesh, eps float64) Result {
 		}
 		next[e.a] = append(next[e.a], e.b)
 	}
-	if len(next) == 0 {
-		res.After = meshcheck.Check(m, eps)
-		return res
-	}
-
+	// No early return when there is nothing to fill: a mesh whose only defect is
+	// debris fused to it has no boundary edges at all, and returning here would
+	// skip the one thing that would have repaired it.
 	pos := w.Points()
 	for _, loop := range boundaryLoops(next, starts) {
 		if len(loop) < 3 {
@@ -146,8 +164,106 @@ func Repair(m *stl.Mesh, eps float64) Result {
 		res.HolesFilled++
 	}
 
+	dropEmptyShells(m, eps, &res)
+
 	res.After = meshcheck.Check(m, eps)
 	return res
+}
+
+// dropEmptyShells deletes connected surfaces that enclose no volume.
+//
+// It runs after hole filling, deliberately: a legitimately open shell has no
+// enclosed volume until its holes are closed, and weighing it first would delete
+// exactly the model repair exists to rescue.
+//
+// The rule is "encloses nothing", not "is small". A hollow model's internal void is
+// a separate inside-out shell with a large negative volume, and deleting shells for
+// being inverted would fill every hollow model solid. Two real bodies in one file
+// are likewise both real. Only a shell whose signed volume cancels to nothing is
+// debris, and removing one cannot change what prints.
+func dropEmptyShells(m *stl.Mesh, eps float64, res *Result) {
+	if len(m.Tris) == 0 {
+		return
+	}
+
+	// Label surfaces, joining triangles only across edges shared by exactly two.
+	// A non-manifold edge deliberately does not join: that is what leaves debris
+	// fused to a body as its own surface rather than part of it.
+	w := geom.NewWelder(eps)
+	ids := make([][3]int, len(m.Tris))
+	type edge struct{ a, b int }
+	shared := make(map[edge][]int, len(m.Tris)*3)
+	for i, t := range m.Tris {
+		ids[i] = [3]int{w.ID(t.A), w.ID(t.B), w.ID(t.C)}
+		for k := 0; k < 3; k++ {
+			a, b := ids[i][k], ids[i][(k+1)%3]
+			if a > b {
+				a, b = b, a
+			}
+			shared[edge{a, b}] = append(shared[edge{a, b}], i)
+		}
+	}
+
+	parent := make([]int, len(m.Tris))
+	for i := range parent {
+		parent[i] = i
+	}
+	find := func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	for _, ts := range shared {
+		if len(ts) != 2 {
+			continue
+		}
+		if ra, rb := find(ts[0]), find(ts[1]); ra != rb {
+			parent[ra] = rb
+		}
+	}
+
+	// Signed volume and surface area per shell. Area sets the tolerance: a shell
+	// enclosing nothing has a volume of pure rounding error, which is bounded by
+	// its own area times the welding tolerance. A real solid's volume exceeds that
+	// by orders of magnitude, since eps is nanometres against a printable wall.
+	vol := make(map[int]float64)
+	area := make(map[int]float64)
+	count := make(map[int]int)
+	for i, t := range m.Tris {
+		r := find(i)
+		vol[r] += t.A.Cross(t.B).Dot(t.C) / 6
+		area[r] += t.B.Sub(t.A).Cross(t.C.Sub(t.A)).Len() / 2
+		count[r]++
+	}
+
+	empty := make(map[int]bool)
+	for r, v := range vol {
+		if math.Abs(v) <= eps*area[r] {
+			empty[r] = true
+			res.ShellsDropped++
+			res.TrianglesRemoved += count[r]
+		}
+	}
+	if len(empty) == 0 {
+		return
+	}
+	// Never strip the mesh to nothing. A model that is entirely flat sheets is not
+	// debris, it is a model this cannot help with, and deleting all of it would turn
+	// a reported problem into an empty file.
+	if res.TrianglesRemoved == len(m.Tris) {
+		res.ShellsDropped, res.TrianglesRemoved = 0, 0
+		return
+	}
+
+	kept := make([]stl.Tri, 0, len(m.Tris)-res.TrianglesRemoved)
+	for i, t := range m.Tris {
+		if !empty[find(i)] {
+			kept = append(kept, t)
+		}
+	}
+	m.Tris = kept
 }
 
 // boundaryLoops walks the directed boundary edges into simple closed loops,

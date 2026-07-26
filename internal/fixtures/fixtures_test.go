@@ -143,6 +143,32 @@ func TestTouchingCubesHaveNonManifoldEdgesAndNoHoles(t *testing.T) {
 	}
 }
 
+// CubeWithFlap reproduces what real cut output actually contains.
+//
+// Two parts exported from this application had 7 and 11 components of exactly two
+// triangles, each enclosing zero volume and each fused to a real body along one
+// edge — which is what made that edge non-manifold. Some were 0.01mm across. They
+// are cut debris: they enclose nothing and print as nothing.
+func TestCubeWithFlapHasAZeroVolumeShellOnANonManifoldEdge(t *testing.T) {
+	m := CubeWithFlap(10)
+	if got := len(m.Tris); got != 14 {
+		t.Fatalf("got %d triangles, want 14 (a cube plus a two-triangle flap)", got)
+	}
+
+	// The flap encloses nothing, so it changes no volume.
+	if got, want := m.Volume(), Cube(10).Volume(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("volume = %v, want %v — a flap encloses nothing", got, want)
+	}
+
+	rep := meshcheck.Check(m, m.Epsilon())
+	if rep.OpenEdges != 1 {
+		t.Errorf("OpenEdges = %d, want 1 (the edge the flap is fused to)", rep.OpenEdges)
+	}
+	if rep.Degenerate != 0 {
+		t.Errorf("the flap's triangles have area, so none is degenerate; got %s", rep)
+	}
+}
+
 // translate returns a copy of m shifted by off.
 func translate(m *stl.Mesh, off geom.Vec3) *stl.Mesh {
 	out := &stl.Mesh{Tris: make([]stl.Tri, len(m.Tris))}

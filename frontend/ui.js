@@ -131,6 +131,14 @@ function reportRepair(tree) {
   if (r.degenerateRemoved) {
     did.push(`removed ${r.degenerateRemoved} zero-area triangle(s)`);
   }
+  if (r.shellsDropped) {
+    // Debris is what real cut output actually suffers from, so it is worth naming
+    // as debris rather than as an anonymous count of deleted triangles.
+    did.push(
+      `dropped ${r.shellsDropped} stray shell(s) enclosing no volume ` +
+        `(${r.trianglesRemoved} triangle(s) of debris)`
+    );
+  }
   if (did.length) {
     message(`Repaired the mesh: ${did.join(", ")}.`, r.closed ? "ok" : "warn");
   } else {

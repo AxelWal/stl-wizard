@@ -77,6 +77,8 @@ export namespace main {
 	    after: string;
 	    closed: boolean;
 	    nonManifoldEdges: number;
+	    shellsDropped: number;
+	    trianglesRemoved: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RepairView(source);
@@ -91,6 +93,8 @@ export namespace main {
 	        this.after = source["after"];
 	        this.closed = source["closed"];
 	        this.nonManifoldEdges = source["nonManifoldEdges"];
+	        this.shellsDropped = source["shellsDropped"];
+	        this.trianglesRemoved = source["trianglesRemoved"];
 	    }
 	}
 	export class Part {

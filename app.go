@@ -78,6 +78,12 @@ type RepairView struct {
 	// this the sidebar could only say "filled 0 holes", which reads as a repair
 	// that did not bother.
 	NonManifoldEdges int `json:"nonManifoldEdges"`
+	// ShellsDropped counts surfaces deleted for enclosing nothing — cut debris.
+	// This is what actually repairs real exported files: two parts from this
+	// application had 7 and 14 such shells, and deleting them took every one of
+	// their 22 non-manifold edges with them.
+	ShellsDropped    int `json:"shellsDropped"`
+	TrianglesRemoved int `json:"trianglesRemoved"`
 }
 
 // view snapshots the current tree for the frontend. Returns nil when nothing is
@@ -187,6 +193,8 @@ func (a *App) loadPath(path string, doRepair bool) (*TreeView, error) {
 				After:             res.After.String(),
 				Closed:            res.After.OK(),
 				NonManifoldEdges:  res.NonManifoldEdges,
+				ShellsDropped:     res.ShellsDropped,
+				TrianglesRemoved:  res.TrianglesRemoved,
 			}
 		}
 	}

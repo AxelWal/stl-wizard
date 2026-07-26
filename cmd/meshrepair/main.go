@@ -64,7 +64,7 @@ func run(args []string, out io.Writer) error {
 			// run it and get "filled 0 holes" with no explanation.
 			probe := repair.Repair(&stl.Mesh{Tris: append([]stl.Tri(nil), mesh.Tris...)}, eps)
 			explainKinds(out, probe)
-			if probe.BoundaryEdges == 0 && probe.DegenerateRemoved == 0 {
+			if probe.BoundaryEdges == 0 && probe.DegenerateRemoved == 0 && probe.ShellsDropped == 0 {
 				return errors.New("the mesh is not a closed solid, and repair cannot help with this kind of defect")
 			}
 			return errors.New("the mesh is not a closed solid; pass -out to repair it")
@@ -77,8 +77,10 @@ func run(args []string, out io.Writer) error {
 	res := repair.Repair(mesh, eps)
 	took := time.Since(start)
 
-	fmt.Fprintf(out, "  repair: filled %d hole(s) with %d triangle(s), removed %d degenerate  (in %s)\n",
-		res.HolesFilled, res.TrianglesAdded, res.DegenerateRemoved, took.Round(time.Millisecond))
+	fmt.Fprintf(out, "  repair: filled %d hole(s) with %d triangle(s), removed %d degenerate,\n"+
+		"          dropped %d empty shell(s) totalling %d triangle(s)  (in %s)\n",
+		res.HolesFilled, res.TrianglesAdded, res.DegenerateRemoved,
+		res.ShellsDropped, res.TrianglesRemoved, took.Round(time.Millisecond))
 	fmt.Fprintf(out, "  after:  %s\n", res.After)
 	fmt.Fprintf(out, "  volume: %.6g -> %.6g (%+.4g)\n", volBefore, mesh.Volume(), mesh.Volume()-volBefore)
 
