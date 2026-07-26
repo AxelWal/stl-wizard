@@ -64,6 +64,7 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 - [x] **[auto]** Keep proportions makes one field drive all three.
 - [x] **[auto]** Unticked, each axis scales on its own and the model stays closed.
 - [x] **[auto]** Millimetre mode reaches the size asked for, even after an earlier scale.
+- [x] **[auto]** Scaling re-frames the view, so the camera is not left inside the model.
 - [x] **[auto]** Reset returns to exactly the file's own size and volume.
 - [x] **[auto]** A zero or negative factor is refused with a readable message and changes
       nothing.

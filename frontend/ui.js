@@ -318,6 +318,12 @@ async function applyScale(factors) {
     selectedPlan = null;
     await render(tree);
     showPlan(await Plan());
+    // Re-frame, exactly as loading does. The model has changed size, so a camera and a
+    // cutting plane left over from the old one describe nothing: scaling a 30mm model to
+    // 600mm left the camera at 87 units aimed at (15,20,5), which is inside the new model
+    // looking at a corner — the geometry had scaled and the window looked like it had not.
+    frameAll();
+    showGizmo();
     const size = tree.root.size.map((d) => d.toFixed(1)).join(" × ");
     message(`Scaled to ${size} mm.`, "ok");
     if (had > 0) {

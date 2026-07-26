@@ -472,6 +472,41 @@ test("millimetre mode reaches the size asked for", async (app) => {
   expect.equal(p.size, "150.0 × 200.0 × 50.0 mm", "X reaches exactly 150");
 });
 
+// Scaling a 30mm model to 600mm left the camera at 87 units aimed at (15,20,5) — inside
+// the new model, looking at a corner. The geometry had scaled and the window looked like
+// it had not.
+test("scaling re-frames the view on the new size", async (app) => {
+  await app.open("u");
+  await app.scale({ mm: true, x: 600, y: 800, z: 200, uniform: false });
+
+  const view = await app.page.evaluate(() => {
+    const THREE = window.app.three;
+    const box = new THREE.Box3();
+    window.app.gizmoGroup().parent.traverse((o) => {
+      if (o.isMesh && o.userData.partId) box.expandByObject(o);
+    });
+    const centre = box.getCenter(new THREE.Vector3());
+    const cam = window.app.camera();
+    const t = window.app.controls().target;
+    return {
+      centre: [centre.x, centre.y, centre.z],
+      target: [t.x, t.y, t.z],
+      inside: box.containsPoint(cam.position),
+      distance: cam.position.distanceTo(centre),
+      size: Math.max(...box.getSize(new THREE.Vector3()).toArray()),
+      planeWidth: window.app.planeInput().width,
+    };
+  });
+
+  for (const k of [0, 1, 2]) {
+    expect.near(view.target[k], view.centre[k], 1, `the camera aims at the scaled model, axis ${k}`);
+  }
+  expect.ok(!view.inside, "the camera is not left inside the model");
+  expect.ok(view.distance > view.size * 0.5, `the camera stands off the model, ${view.distance} vs ${view.size}`);
+  // And the cutting plane is sized for the model it now sits on, not the old one.
+  expect.ok(view.planeWidth > 400, `the plane to span the scaled model, got ${view.planeWidth}`);
+});
+
 test("reset returns to the file's own size", async (app) => {
   await app.open("u");
   const [before] = await app.parts();
