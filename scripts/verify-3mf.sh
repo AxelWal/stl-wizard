@@ -37,6 +37,25 @@ echo "--- what Bambu Studio reads ---"
 flatpak run com.bambulab.BambuStudio "$work/in.3mf" --info 2>/dev/null |
 	grep -E 'number_of_facets|manifold|volume' || true
 
+# Before believing any failure below, check the slicer can read a project at all here.
+# Bambu Studio 2.7.1.62 as a flatpak segfaults on every file it recognises as its own
+# project — including one it exported itself — almost certainly the same headless-GL
+# failure that stops the GUI starting. Files it treats as third-party geometry survive.
+# Without this control a crash reads as "our file is malformed" when it means "this
+# machine cannot check".
+echo "--- can this environment read a Bambu project at all? ---"
+control=$work/control.stl
+cp "$(dirname "$0")/../testdata/u.stl" "$control"
+if flatpak run com.bambulab.BambuStudio --export-3mf "$work/control.3mf" "$control" >/dev/null 2>&1 &&
+	flatpak run com.bambulab.BambuStudio "$work/control.3mf" --info >/dev/null 2>&1; then
+	echo "control: the slicer reads its own export, so a failure below is ours"
+else
+	echo "control: the slicer CRASHES on its own export in this environment." >&2
+	echo "The plate layout cannot be checked here at all — see docs/manual-verification.md," >&2
+	echo "which asks for the Bambu Studio GUI. Not treating this as a failure of our file." >&2
+	exit 4
+fi
+
 echo "--- round trip with arrange disabled ---"
 flatpak run com.bambulab.BambuStudio "$work/in.3mf" \
 	--arrange 0 --export-3mf out.3mf --outputdir "$work" >/dev/null 2>&1

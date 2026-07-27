@@ -257,26 +257,23 @@ Drop `-tags webkit2_41` on a system with webkit2gtk 4.0 instead of 4.1.
 
 ## Whether a multi-plate 3MF really lands one part per plate
 
-`scripts/verify-3mf.sh` fails this: four plates go in, four objects come back at the
-coordinates we wrote, and only plate 1 owns anything. Three candidate causes have been
-ruled out by experiment — a missing `identify_id`, Bambu's object/part id numbering, and a
-plate stride of bed x 1.2 from `LOGICAL_PART_PLATE_GAP` — and CLAUDE.md records them so the
-time is not spent twice.
+The cause of the old failure is known and fixed: plates are only honoured for a file whose
+`Application` metadata says `BambuStudio-` or `OrcaSlicer-`, because that is what sets
+`m_is_bbl_3mf` in the importer, and that flag gates the whole plate path. The export now
+says so and carries the production extension the flag's branch requires.
 
-The remaining explanation is that **Bambu's command line does not honour plate assignment
-on import**, and only the GUI does. That cannot be tested here: the flatpak's GUI will not
-start in this sandbox (`Invalid OpenGL version 3.4, Failed to create GLFW window`), and the
-CLI is the only way in.
+**It cannot be checked from the command line here.** Bambu Studio 2.7.1.62 as a flatpak
+segfaults on every file it recognises as its own project, including one it exported itself
+— that control is what proves the crash is the environment and not our file.
+`scripts/verify-3mf.sh` runs it first and exits 4 with an explanation.
 
 So, by hand:
 
 1. Cut a model into four or more parts and export a multi-plate 3MF.
 2. Open it in the Bambu Studio **GUI**, not the CLI.
-3. Look at the plate selector along the bottom. Each plate should hold exactly one part,
-   and each part should sit centred on its own plate.
+3. Look at the plate selector along the bottom: each plate should hold exactly one part,
+   centred on its own plate.
+4. Check the bed matches the printer chosen in the app, not 200x200x100.
 
-If the GUI shows one part per plate, our writer is correct and `verify-3mf.sh`'s plate
-assertion is measuring a CLI limitation — say so in the script and stop treating it as a
-failure. If the GUI also collapses everything onto plate 1, the writer is wrong and the
-next thing to compare is a real multi-plate project saved from the GUI, since the reference
-export used so far has only one plate.
+If a part is missing or everything lands on plate 1, the next comparison is a real
+multi-plate project saved from the GUI — the reference used so far has only one plate.

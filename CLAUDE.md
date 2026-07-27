@@ -330,73 +330,35 @@ installed Bambu Studio flatpak. **Pass `--arrange 0`** as that script does: Bamb
 CLI re-arranges on import by default and repacks everything onto plate 1, which is
 indistinguishable from our file being wrong. The GUI does not.
 
-**The multi-plate round trip currently fails, and the claim that used to stand here was
-wrong.** `scripts/verify-3mf.sh` reports "4 plate(s) but 1 object assignment(s)". Measured
-on Bambu Studio 2.7.1.62: all four objects and all four `<plate>` elements survive the
-round trip, the objects come back at the coordinates we wrote (X = 175, 565, 955, 1345,
-our own stride of bed + 40 preserved), but **only plate 1 has a `model_instance`** — 2, 3
-and 4 come back empty. So the plate assignment in `model_settings.config` is *not* what
-decides the plate, or not on its own, and the previous note here ("that was verified to
-survive; the stride only affects where things are drawn") does not hold.
+**Plates are only honoured for a file the slicer believes it wrote.** This cost a long
+investigation and the answer is in OrcaSlicer's `bbs_3mf.cpp`: `_handle_end_metadata` sets
+`m_is_bbl_3mf` **only** when `<metadata name="Application">` starts with `BambuStudio-` or
+`OrcaSlicer-`, and that flag gates the entire plate path. A file it does not recognise is
+treated as third-party geometry — the mesh imports perfectly and every plate assignment is
+discarded. That was the "4 plate(s) but 1 object assignment(s)" symptom.
 
-This is not caused by writing `project_settings.config`: a file without it fails
-identically, so the defect predates that work.
+So `internal/threemf` now writes the **production extension** — one
+`3D/Objects/object_N.model` per part, `p:UUID` everywhere, `requiredextensions="p"`,
+`3D/_rels/3dmodel.model.rels` — and puts `BambuStudio-<version>` in Application, with
+`ApplicationName` carrying our own name so the provenance stays in the file. The two go
+together: claiming the tag without the structure makes the importer take a branch that
+reads what is not there. The package comment saying "none of that is needed" was wrong.
 
-**Three causes have been ruled out by experiment**, each reverted afterwards — do not spend
-the time again:
+**The CLI cannot verify any of this here, and that is not our bug.** Bambu Studio 2.7.1.62
+as a flatpak segfaults on every file it recognises as its own project — *including one it
+exported itself*, which is the control that settles it. Almost certainly the same headless
+OpenGL failure that stops the GUI (`Invalid OpenGL version 3.4`). Only files it treats as
+third-party survive, which is why the old export appeared to "work" while having its plates
+ignored. `scripts/verify-3mf.sh` now runs that control first and exits 4 with an
+explanation rather than blaming our file.
 
-1. **A missing `identify_id`** in `<model_instance>`. The reference export carries one;
-   adding it changed nothing.
-2. **The object/part id convention.** Bambu numbers objects 2,4,6,8 and parts 1,3,5,7 while
-   we reuse one id for both. Matching its numbering changed nothing, which also rules out
-   the id remapping on import (1,2,3,4 become 2,4,6,8) as the cause.
-3. **The plate stride.** OrcaSlicer's `PartPlate.cpp` defines
-   `LOGICAL_PART_PLATE_GAP = 1./5.`, suggesting a stride of bed x 1.2 rather than our
-   bed + 40. Using bed x 1.2 changed nothing.
+Four things were ruled out along the way and are not worth retrying: a missing
+`identify_id`, Bambu's object/part id numbering, a plate stride of bed x 1.2 from
+`LOGICAL_PART_PLATE_GAP`, and a partial `project_settings.config`. All were downstream of a
+flag that was never set.
 
-What is established: our file declares four plates each holding exactly one object, Bambu
-imports all four objects and preserves their transforms to the millimetre, and only plate 1
-ends up owning anything.
-
-**The most likely remaining explanation is that the CLI does not honour plate assignment on
-import at all**, and the GUI does — which would make the original note here true and this
-one true as well, since it was probably written from the GUI. Testing that needs the GUI,
-and the GUI will not start in this sandbox: `Invalid OpenGL version 3.4, Failed to create
-GLFW window`. It is a line in `docs/manual-verification.md` now.
-
-Until someone opens one of these files in the Bambu GUI, treat `verify-3mf.sh`'s plate
-assertion as unproven rather than as a known bug in our writer.
-
-Bambu's default bed with no `project_settings.config` is 200x200x100 — measured from a
-reference export — so a part placed by our stride could land off it. That much is now
-fixed: the export declares the bed the user chose.
-
-## Read before trusting results
-
-`README.md` "Known limitations" carries measured failure rates. The big one: cutting
-through a pin's cylinder leaves a piece open by about three edges, because the cap
-triangulator does not pair them. The triangulation weakness is **still there** —
-`repairCutParts` in `app.go` closes the gap afterwards instead, which took the
-documented case from 32 of 65 pieces flagged to 5 of 64. Every closed gap is reported
-with its edge count and the volume it moved; a gap repair cannot close leaves the piece
-flagged as before. If you go after the root cause, the shortest repro is a 300mm cube
-auto-split onto a 200mm bed with 4 pins: 7 cuts, 2 pieces open by 3 edges each.
-
-**arm64 rounds differently, and the CI matrix is where you find out.** `rayTriangle`
-tested its barycentric coordinates against exact bounds, which accepts a hit on the edge
-two triangles share only because a value landing *exactly* on the boundary passes `< 0`
-and `> 1`. Rounded an ulp outward it is rejected by both and the surface is porous — the
-ray passes through solid material and reports nothing. Go fuses multiply-adds on arm64 and
-not on amd64, so `TestAxialClearanceIgnoresTheFaceItStartsOn` and
-`TestApplyPinsRespectsThePegSide` failed on macos-arm64 with both amd64 runners green: a
-cube's top face splits along its diagonal and `axialClearance` samples its footprint at 45
-degrees, landing exactly on it. `baryEps` in `raycast.go` is the fix.
-
-Three attempts to reproduce it on amd64 all failed — fusing `rayTriangle`'s multiply-adds
-by hand, fusing the sample point too, and jittering the sample by an ulp each way. **Do not
-trust an amd64-only mutation run for anything that compares a float against a boundary.**
-The proof was `gh workflow run build.yml --ref <branch>` with `baryEps` set to 0, which
-brought both failures back verbatim, line numbers included.
+**What is still unverified:** whether the plate layout actually lands one part per plate in
+the GUI. `docs/manual-verification.md` has the step.
 
 `PinSpec.Count` is a **target, not a demand** (`internal/cut/pins.go:17`):
 placement grids the face and stops when it runs out of room, and a pin it never

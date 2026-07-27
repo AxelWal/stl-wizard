@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -167,6 +168,8 @@ func TestGeometrySurvivesTheRoundTrip(t *testing.T) {
 	u := fixtures.UShape(10)
 	r := writePlates(t, []Plate{{Name: "u", Mesh: u, Transform: identity()}})
 
+	// The mesh lives in the part's own sub-model now, not in the root document — see the
+	// note on the package for why the production extension is required.
 	var model modelXML
 	if err := xml.Unmarshal(entry(t, r, "3D/3dmodel.model"), &model); err != nil {
 		t.Fatalf("3dmodel.model: %v", err)
@@ -174,7 +177,7 @@ func TestGeometrySurvivesTheRoundTrip(t *testing.T) {
 	if len(model.Resources.Objects) != 1 {
 		t.Fatalf("got %d objects, want 1", len(model.Resources.Objects))
 	}
-	o := model.Resources.Objects[0]
+	o := subObject(t, r, 0)
 	if got := len(o.Mesh.Triangles.T); got != len(u.Tris) {
 		t.Errorf("got %d triangles, want %d", got, len(u.Tris))
 	}
@@ -223,11 +226,12 @@ func TestTheBuildTransformPutsEachPartOnItsPlate(t *testing.T) {
 		t.Fatalf("3dmodel.model: %v", err)
 	}
 	m := parseTransform(t, model.Build.Items[0].Transform)
+	mesh := subObject(t, r, 0)
 
 	// Apply as 3MF says: row vector times matrix.
 	lo := geom.Vec3{math.Inf(1), math.Inf(1), math.Inf(1)}
 	hi := geom.Vec3{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
-	for _, v := range model.Resources.Objects[0].Mesh.Vertices.V {
+	for _, v := range mesh.Mesh.Vertices.V {
 		p := geom.Vec3{v.X, v.Y, v.Z}
 		q := geom.Vec3{
 			p[0]*m[0] + p[1]*m[3] + p[2]*m[6] + m[9],
@@ -349,28 +353,41 @@ func parseTransform(t *testing.T, s string) [12]float64 {
 	return out
 }
 
+type objectXML struct {
+	ID   string `xml:"id,attr"`
+	Type string `xml:"type,attr"`
+	UUID string `xml:"UUID,attr"`
+	Mesh struct {
+		Vertices struct {
+			V []struct {
+				X float64 `xml:"x,attr"`
+				Y float64 `xml:"y,attr"`
+				Z float64 `xml:"z,attr"`
+			} `xml:"vertex"`
+		} `xml:"vertices"`
+		Triangles struct {
+			T []struct {
+				V1 int `xml:"v1,attr"`
+				V2 int `xml:"v2,attr"`
+				V3 int `xml:"v3,attr"`
+			} `xml:"triangle"`
+		} `xml:"triangles"`
+	} `xml:"mesh"`
+	Components struct {
+		C []struct {
+			Path     string `xml:"path,attr"`
+			ObjectID string `xml:"objectid,attr"`
+		} `xml:"component"`
+	} `xml:"components"`
+}
+
 type modelXML struct {
+	Metadata []struct {
+		Name  string `xml:"name,attr"`
+		Value string `xml:",chardata"`
+	} `xml:"metadata"`
 	Resources struct {
-		Objects []struct {
-			ID   string `xml:"id,attr"`
-			Type string `xml:"type,attr"`
-			Mesh struct {
-				Vertices struct {
-					V []struct {
-						X float64 `xml:"x,attr"`
-						Y float64 `xml:"y,attr"`
-						Z float64 `xml:"z,attr"`
-					} `xml:"vertex"`
-				} `xml:"vertices"`
-				Triangles struct {
-					T []struct {
-						V1 int `xml:"v1,attr"`
-						V2 int `xml:"v2,attr"`
-						V3 int `xml:"v3,attr"`
-					} `xml:"triangle"`
-				} `xml:"triangles"`
-			} `xml:"mesh"`
-		} `xml:"object"`
+		Objects []objectXML `xml:"object"`
 	} `xml:"resources"`
 	Build struct {
 		Items []struct {
@@ -507,8 +524,87 @@ func writeProject(t *testing.T, plates []Plate, p Project) *zip.Reader {
 	return r
 }
 
+// subObject reads the i-th part's own sub-model and returns its single object, which is
+// where the geometry lives once the production extension is written.
+func subObject(t *testing.T, r *zip.Reader, i int) objectXML {
+	t.Helper()
+	name := fmt.Sprintf("3D/Objects/object_%d.model", i+1)
+	var m modelXML
+	if err := xml.Unmarshal(entry(t, r, name), &m); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if len(m.Resources.Objects) != 1 {
+		t.Fatalf("%s holds %d objects, want 1", name, len(m.Resources.Objects))
+	}
+	return m.Resources.Objects[0]
+}
+
 func cubePlate(name string) Plate {
 	return Plate{Name: name, Mesh: fixtures.Cube(10), Transform: identity()}
 }
 
 func oneFilament() []Filament { return []Filament{{Colour: "#00AE42", Type: "PLA"}} }
+
+// The plate extension is only honoured for a file the slicer believes it wrote, and that
+// belief has exactly two requirements. Both are load-bearing and neither is guessable from
+// the file alone, so they are pinned here.
+//
+// In OrcaSlicer's bbs_3mf.cpp, _handle_end_metadata sets m_is_bbl_3mf only when
+// <metadata name="Application"> starts with "BambuStudio-" or "OrcaSlicer-". That flag
+// gates the whole plate path: without it the geometry imports perfectly and every plate
+// assignment is discarded. And a file claiming the tag must actually carry the production
+// extension, or the branch it selects reads a structure that is not there.
+func TestTheFileClaimsTheDialectThatMakesPlatesWork(t *testing.T) {
+	r := writeProject(t, []Plate{cubePlate("a"), cubePlate("b")}, testProject())
+
+	var model modelXML
+	if err := xml.Unmarshal(entry(t, r, "3D/3dmodel.model"), &model); err != nil {
+		t.Fatalf("3dmodel.model: %v", err)
+	}
+
+	app := ""
+	for _, m := range model.Metadata {
+		if m.Name == "Application" {
+			app = m.Value
+		}
+	}
+	if !strings.HasPrefix(app, "BambuStudio-") && !strings.HasPrefix(app, "OrcaSlicer-") {
+		t.Errorf("Application is %q; the reader only honours plates for BambuStudio- or OrcaSlicer-", app)
+	}
+
+	// The production extension: every object is a component pointing at its own sub-model,
+	// each sub-model is a real entry, and the package declares the relationships.
+	raw := string(entry(t, r, "3D/3dmodel.model"))
+	if !strings.Contains(raw, `requiredextensions="p"`) {
+		t.Error("the root model does not require the production extension")
+	}
+	if len(model.Resources.Objects) != 2 {
+		t.Fatalf("got %d objects, want 2", len(model.Resources.Objects))
+	}
+	names := map[string]bool{}
+	for _, f := range r.File {
+		names[f.Name] = true
+	}
+	for i, o := range model.Resources.Objects {
+		if len(o.Mesh.Triangles.T) != 0 {
+			t.Errorf("object %d carries an inline mesh; it belongs in the sub-model", i)
+		}
+		if len(o.Components.C) != 1 {
+			t.Fatalf("object %d has %d components, want 1", i, len(o.Components.C))
+		}
+		path := strings.TrimPrefix(o.Components.C[0].Path, "/")
+		if !names[path] {
+			t.Errorf("object %d points at %q, which is not in the archive", i, path)
+		}
+		if o.UUID == "" {
+			t.Errorf("object %d has no p:UUID, which the production extension requires", i)
+		}
+	}
+	rels := string(entry(t, r, "3D/_rels/3dmodel.model.rels"))
+	for i := range model.Resources.Objects {
+		want := fmt.Sprintf("/3D/Objects/object_%d.model", i+1)
+		if !strings.Contains(rels, want) {
+			t.Errorf("3dmodel.model.rels does not reference %s:\n%s", want, rels)
+		}
+	}
+}

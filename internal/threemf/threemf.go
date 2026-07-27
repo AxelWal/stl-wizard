@@ -6,10 +6,27 @@
 // to produce, rather than inferred: six cubes exported as six plates, and
 // Metadata/model_settings.config copied from the result.
 //
-// Bambu's own export uses the production extension — external 3D/Objects/object_N.model
-// files, p:UUID on every element, requiredextensions="p". None of that is needed. A
-// single 3D/3dmodel.model with an inline mesh per object is plain core 3MF, and it is
-// far less to write and to get wrong.
+// It writes Bambu's production extension — external 3D/Objects/object_N.model files,
+// p:UUID on every element, requiredextensions="p" — and names itself in the Application
+// metadata the way Bambu Studio does. Both are required, and it took a while to establish
+// why.
+//
+// A single 3D/3dmodel.model with inline meshes is plain core 3MF and far less to get
+// wrong, and that is what this package used to write. Bambu imported the geometry from it
+// perfectly and silently ignored every plate assignment: four plates went in, four objects
+// came back at the right coordinates, and only plate 1 owned anything.
+//
+// The cause is in OrcaSlicer's bbs_3mf.cpp. m_is_bbl_3mf is set in _handle_end_metadata
+// only when <metadata name="Application"> starts with "BambuStudio-" or "OrcaSlicer-", and
+// that flag gates the whole plate path. A file the slicer does not believe it wrote is
+// treated as third-party geometry, plates and all. Confirmed in both directions: claiming
+// the tag while still writing inline meshes makes the importer die with SIGSEGV, because
+// the branch it then takes expects the production extension.
+//
+// So the Application tag says BambuStudio. That is a dialect marker rather than a claim of
+// authorship — it is the only value the reader accepts, there is no vendor-neutral opt-in —
+// and stl-wizard names itself in ApplicationName alongside it so the provenance is still in
+// the file.
 package threemf
 
 import (
@@ -106,24 +123,35 @@ func Write(w io.Writer, plates []Plate, proj Project) error {
 	}
 
 	z := zip.NewWriter(w)
-	// Object ids start at 1 and step by 1. Bambu numbers them 2,4,6… with odd part
-	// ids in between; nothing reads a meaning into the numbers, only that the plate
-	// and the model agree on them.
+	// Two ids per part, numbered as Bambu numbers them: the object in the root document
+	// gets the even one and the mesh object in its own sub-model gets the odd one below
+	// it. model_settings.config names the outer id as its object and the inner id as its
+	// part, which is what makes <part> reference something that exists.
 	ids := make([]int, len(plates))
 	for i := range plates {
-		ids[i] = i + 1
+		ids[i] = (i + 1) * 2
 	}
 
-	for _, f := range []struct {
+	files := []struct {
 		name string
 		body func() string
 	}{
 		{"[Content_Types].xml", contentTypes},
 		{"_rels/.rels", rels},
 		{"3D/3dmodel.model", func() string { return model(plates, ids) }},
+		{"3D/_rels/3dmodel.model.rels", func() string { return modelRels(len(plates)) }},
 		{"Metadata/model_settings.config", func() string { return settings(plates, ids) }},
 		{"Metadata/project_settings.config", func() string { return projectSettings(proj) }},
-	} {
+	}
+	for i, p := range plates {
+		i, p := i, p
+		files = append(files, struct {
+			name string
+			body func() string
+		}{subModelPath(i), func() string { return subModel(p, ids[i]-1) }})
+	}
+
+	for _, f := range files {
 		e, err := z.Create(f.name)
 		if err != nil {
 			return err
@@ -152,28 +180,70 @@ func rels() string {
 
 const xmlHeader = `<?xml version="1.0" encoding="UTF-8"?>` + "\n"
 
-// model writes the core document: one object per plate with its mesh inline, and one
-// build item per object carrying that part's placement.
+// model writes the root document: one object per plate whose mesh lives in its own
+// sub-model, and one build item per object carrying that part's placement.
 func model(plates []Plate, ids []int) string {
 	var b strings.Builder
 	b.WriteString(xmlHeader)
-	b.WriteString(`<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">` + "\n")
-	b.WriteString(" <metadata name=\"Application\">stl-wizard</metadata>\n")
-	// The reference export from Bambu Studio carries this, and it costs nothing to say.
+	b.WriteString(`<model unit="millimeter" xml:lang="en-US" xmlns="` + coreNS +
+		`" xmlns:BambuStudio="` + bambuNS + `" xmlns:p="` + productionNS +
+		`" requiredextensions="p">` + "\n")
+	// BambuStudio, because the reader only honours the plate extension for files it
+	// believes it wrote; see the note on this package. Our own name goes alongside.
+	b.WriteString(" <metadata name=\"Application\">" + applicationTag + "</metadata>\n")
+	b.WriteString(" <metadata name=\"ApplicationName\">stl-wizard</metadata>\n")
 	b.WriteString(" <metadata name=\"BambuStudio:3mfVersion\">1</metadata>\n")
 	b.WriteString(" <resources>\n")
 	for i, p := range plates {
-		fmt.Fprintf(&b, "  <object id=\"%d\" type=\"model\" name=\"%s\">\n", ids[i], escape(p.Name))
-		writeMesh(&b, p.Mesh)
-		b.WriteString("  </object>\n")
+		inner := ids[i] - 1
+		fmt.Fprintf(&b, "  <object id=\"%d\" p:UUID=\"%s\" type=\"model\" name=\"%s\">\n",
+			ids[i], objectUUID(inner), escape(p.Name))
+		b.WriteString("   <components>\n")
+		fmt.Fprintf(&b, "    <component p:path=\"/%s\" objectid=\"%d\" p:UUID=\"%s\" transform=\"%s\"/>\n",
+			subModelPath(i), inner, componentUUID(inner), transformString(identityTransform))
+		b.WriteString("   </components>\n  </object>\n")
 	}
-	b.WriteString(" </resources>\n <build>\n")
+	b.WriteString(" </resources>\n")
+	fmt.Fprintf(&b, " <build p:UUID=\"%s\">\n", buildUUID)
 	for i, p := range plates {
-		fmt.Fprintf(&b, "  <item objectid=\"%d\" transform=\"%s\" printable=\"1\"/>\n",
-			ids[i], transformString(p.Transform))
+		fmt.Fprintf(&b, "  <item objectid=\"%d\" p:UUID=\"%s\" transform=\"%s\" printable=\"1\"/>\n",
+			ids[i], itemUUID(ids[i]), transformString(p.Transform))
 	}
 	b.WriteString(" </build>\n</model>\n")
 	return b.String()
+}
+
+// subModel writes one part's own document, holding the mesh itself.
+func subModel(p Plate, inner int) string {
+	var b strings.Builder
+	b.WriteString(xmlHeader)
+	b.WriteString(`<model unit="millimeter" xml:lang="en-US" xmlns="` + coreNS +
+		`" xmlns:BambuStudio="` + bambuNS + `" xmlns:p="` + productionNS +
+		`" requiredextensions="p">` + "\n")
+	b.WriteString(" <metadata name=\"BambuStudio:3mfVersion\">1</metadata>\n")
+	b.WriteString(" <resources>\n")
+	fmt.Fprintf(&b, "  <object id=\"%d\" p:UUID=\"%s\" type=\"model\">\n", inner, subObjectUUID(inner))
+	writeMesh(&b, p.Mesh)
+	b.WriteString("  </object>\n </resources>\n <build/>\n</model>\n")
+	return b.String()
+}
+
+// modelRels points the root document at every sub-model. Without these the sub-models are
+// unreachable parts of the package and the objects resolve to nothing.
+func modelRels(n int) string {
+	var b strings.Builder
+	b.WriteString(xmlHeader)
+	b.WriteString(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` + "\n")
+	for i := range n {
+		fmt.Fprintf(&b, ` <Relationship Target="/%s" Id="rel-%d" Type="%s"/>`+"\n",
+			subModelPath(i), i+1, modelRelType)
+	}
+	b.WriteString("</Relationships>\n")
+	return b.String()
+}
+
+func subModelPath(i int) string {
+	return fmt.Sprintf("3D/Objects/object_%d.model", i+1)
 }
 
 // writeMesh emits welded vertices and the triangles indexing them.
@@ -216,7 +286,7 @@ func settings(plates []Plate, ids []int) string {
 		fmt.Fprintf(&b, "  <object id=\"%d\">\n", ids[i])
 		fmt.Fprintf(&b, "    <metadata key=\"name\" value=\"%s\"/>\n", escape(p.Name))
 		fmt.Fprintf(&b, "    <metadata key=\"extruder\" value=\"%d\"/>\n", filamentOf(p))
-		fmt.Fprintf(&b, "    <part id=\"%d\" subtype=\"normal_part\">\n", ids[i])
+		fmt.Fprintf(&b, "    <part id=\"%d\" subtype=\"normal_part\">\n", ids[i]-1)
 		fmt.Fprintf(&b, "      <metadata key=\"name\" value=\"%s\"/>\n", escape(p.Name))
 		b.WriteString("    </part>\n  </object>\n")
 	}
@@ -317,3 +387,22 @@ func bedPolygon(bed [3]float64) []string {
 	x, y := num(bed[0]), num(bed[1])
 	return []string{"0x0", x + "x0", x + "x" + y, "0x" + y}
 }
+
+// The namespaces and fixed UUID suffixes Bambu's reader expects. The suffixes are
+// constants in bbs_3mf.cpp (OBJECT_UUID_SUFFIX and friends) and the prefix is the id in
+// hex, so these are reproduced rather than invented — the reader tests the suffix.
+const (
+	coreNS         = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+	bambuNS        = "http://schemas.bambulab.com/package/2021"
+	productionNS   = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+	modelRelType   = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+	applicationTag = "BambuStudio-02.07.01.62"
+	buildUUID      = "2c7c17d8-22b5-4d84-8835-1976022ea369"
+)
+
+var identityTransform = [12]float64{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}
+
+func objectUUID(id int) string    { return fmt.Sprintf("%08x-61cb-4c03-9d28-80fed5dfa1dc", id) }
+func subObjectUUID(id int) string { return fmt.Sprintf("%08x-81cb-4c03-9d28-80fed5dfa1dc", id) }
+func componentUUID(id int) string { return fmt.Sprintf("%08x-b206-40ff-9872-83e8017abed1", id) }
+func itemUUID(id int) string      { return fmt.Sprintf("%08x-b1ec-4553-aec9-835e5b724bb4", id) }

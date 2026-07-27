@@ -478,21 +478,23 @@ func placedBounds(t *testing.T, path string) []placedBox {
 	}
 	defer zr.Close()
 
-	var body []byte
+	// Every entry, because the meshes live in their own sub-models now: the root document
+	// holds components pointing at 3D/Objects/object_N.model. The production extension is
+	// what makes the slicer honour the plate layout at all — see internal/threemf.
+	parts := map[string][]byte{}
 	for _, f := range zr.File {
-		if f.Name != "3D/3dmodel.model" {
-			continue
-		}
 		rc, err := f.Open()
 		if err != nil {
-			t.Fatalf("open model: %v", err)
+			t.Fatalf("open %s: %v", f.Name, err)
 		}
-		body, err = io.ReadAll(rc)
+		b, err := io.ReadAll(rc)
 		rc.Close()
 		if err != nil {
-			t.Fatalf("read model: %v", err)
+			t.Fatalf("read %s: %v", f.Name, err)
 		}
+		parts[f.Name] = b
 	}
+	body := parts["3D/3dmodel.model"]
 	if body == nil {
 		t.Fatal("the archive has no 3D/3dmodel.model")
 	}
@@ -500,7 +502,12 @@ func placedBounds(t *testing.T, path string) []placedBox {
 	var doc struct {
 		Resources struct {
 			Objects []struct {
-				ID   string `xml:"id,attr"`
+				ID         string `xml:"id,attr"`
+				Components struct {
+					C []struct {
+						Path string `xml:"path,attr"`
+					} `xml:"component"`
+				} `xml:"components"`
 				Mesh struct {
 					Vertices struct {
 						V []struct {
@@ -527,26 +534,48 @@ func placedBounds(t *testing.T, path string) []placedBox {
 	// vertices by hand where the struct form would collapse x, y and z together.
 	var out []placedBox
 	for _, item := range doc.Build.Items {
-		var obj *struct {
-			ID   string `xml:"id,attr"`
-			Mesh struct {
-				Vertices struct {
-					V []struct {
-						X float64 `xml:"x,attr"`
-						Y float64 `xml:"y,attr"`
-						Z float64 `xml:"z,attr"`
-					} `xml:"vertex"`
-				} `xml:"vertices"`
-			} `xml:"mesh"`
-		}
+		var path string
+		found := false
 		for i := range doc.Resources.Objects {
 			if doc.Resources.Objects[i].ID == item.ObjectID {
-				obj = &doc.Resources.Objects[i]
+				found = true
+				if c := doc.Resources.Objects[i].Components.C; len(c) == 1 {
+					path = strings.TrimPrefix(c[0].Path, "/")
+				}
 			}
 		}
-		if obj == nil {
+		if !found {
 			t.Fatalf("build item names object %s, which is not in the model", item.ObjectID)
 		}
+		if path == "" {
+			t.Fatalf("object %s has no component naming its sub-model", item.ObjectID)
+		}
+		sub := parts[path]
+		if sub == nil {
+			t.Fatalf("object %s points at %s, which is not in the archive", item.ObjectID, path)
+		}
+		var subDoc struct {
+			Resources struct {
+				Objects []struct {
+					Mesh struct {
+						Vertices struct {
+							V []struct {
+								X float64 `xml:"x,attr"`
+								Y float64 `xml:"y,attr"`
+								Z float64 `xml:"z,attr"`
+							} `xml:"vertex"`
+						} `xml:"vertices"`
+					} `xml:"mesh"`
+				} `xml:"object"`
+			} `xml:"resources"`
+		}
+		if err := xml.Unmarshal(sub, &subDoc); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		if len(subDoc.Resources.Objects) != 1 {
+			t.Fatalf("%s holds %d objects, want 1", path, len(subDoc.Resources.Objects))
+		}
+		obj := &subDoc.Resources.Objects[0]
 
 		fields := strings.Fields(item.Transform)
 		if len(fields) != 12 {
